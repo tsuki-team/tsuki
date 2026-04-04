@@ -1,0 +1,297 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Transparent root — needed for rounded Tauri window */
+html, body {
+  background: transparent !important;
+  overflow: hidden;
+  border-radius: 6px; /* STYLE.md §20: rounded = 4–6 px para ventana */
+}
+
+/* ── Design tokens ── */
+:root {
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Fira Code', monospace;
+
+  /* Adaptive sizing — scales with viewport width between breakpoints.
+     At 1024px wide → ~12px base. At 1440px → 13px. At 1920px → 14px.
+     min() prevents it going huge on ultrawide displays. */
+  --base-size:    clamp(11px, 0.85vw, 14px);
+
+  /* Topbar/row heights — tighter on compact mode, normal otherwise */
+  --topbar-h:     clamp(34px, 3.5vh, 44px);
+  --row-h:        clamp(26px, 2.8vh, 32px);
+
+  /* Sidebar width: fluid between 140px and 220px based on viewport */
+  --sidebar-min:  140px;
+  --sidebar-max:  220px;
+
+  /* Settings layout */
+  --settings-sidebar-w: clamp(152px, 14vw, 200px);
+  --settings-field-ctrl: clamp(180px, 22vw, 220px);
+  --settings-content-px: clamp(16px, 4vw, 40px);
+}
+
+/* DARK MODE (default) */
+html, html.dark {
+  --surface:    #0a0a0a;
+  --surface-1:  #111111;
+  --surface-2:  #171717;
+  --surface-3:  #1f1f1f;
+  --surface-4:  #282828;
+  --border:     #242424;
+  --border-subtle: #1c1c1c;
+  --fg:         #ededed;
+  --fg-muted:   #8c8c8c;
+  --fg-faint:   #484848;
+  --accent:     #ededed;
+  --accent-inv: #0a0a0a;
+  --hover:      rgba(255,255,255,0.04);
+  --active:     rgba(255,255,255,0.08);
+  --active-border: #555;
+  --syn-kw:     #ededed;
+  --syn-fn:     #d4d4d4;
+  --syn-str:    #a0a0a0;
+  --syn-num:    #b0b0b0;
+  --syn-com:    #525252;
+  --syn-typ:    #c8c8c8;
+  --syn-pkg:    #b8b8b8;
+  --syn-op:     #ededed;
+  --ok:         #22c55e;
+  --err:        #ef4444;
+  --warn:       #f59e0b;
+  --info:       #93c5fd;
+/* ── AppChrome vars (dark) ── */
+  --chrome-bg:       #0e0f10;
+  --chrome-border:   #1e2022;
+  --chrome-sep:      #242628;
+  --chrome-fg:       #c8ccd0;
+  --chrome-fg-muted: #6b6f72;
+  --chrome-input:    #181a1b;
+  --chrome-group:    #141618;
+}
+
+/* LIGHT MODE */
+html.light {
+  --surface:    #ffffff;
+  --surface-1:  #fafafa;
+  --surface-2:  #f5f5f5;
+  --surface-3:  #efefef;
+  --surface-4:  #e8e8e8;
+  --border:     #e8e8e8;
+  --border-subtle: #f0f0f0;
+  --fg:         #111111;
+  --fg-muted:   #737373;
+  --fg-faint:   #c4c4c4;
+  --accent:     #111111;
+  --accent-inv: #ffffff;
+  --hover:      rgba(0,0,0,0.03);
+  --active:     rgba(0,0,0,0.06);
+
+  /* ── AppChrome vars (light) ── */
+  --chrome-bg:       #f0f0f0;
+  --chrome-border:   #d8d8d8;
+  --chrome-sep:      #d0d0d0;
+  --chrome-fg:       #1a1a1a;
+  --chrome-fg-muted: #666666;
+  --chrome-input:    #e8e8e8;
+  --chrome-group:    #e0e0e0;
+  --active-border: #999;
+  --syn-kw:     #111111;
+  --syn-fn:     #2d2d2d;
+  --syn-str:    #595959;
+  --syn-num:    #525252;
+  --syn-com:    #aaaaaa;
+  --syn-typ:    #3d3d3d;
+  --syn-pkg:    #474747;
+  --syn-op:     #111111;
+  --ok:         #16a34a;
+  --err:        #dc2626;
+  --warn:       #d97706;
+  --info:       #3b82f6;
+}
+
+/* ── Base ── */
+* { box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--base-size);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Compact mode — applied via data-compact="true" on <html> */
+html[data-compact="true"] {
+  --topbar-h:  clamp(28px, 3vh, 34px);
+  --row-h:     clamp(22px, 2.4vh, 26px);
+  --base-size: clamp(10px, 0.78vw, 12px);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 100px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.18);
+  border-radius: 100px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* Light mode scrollbar overrides */
+html.light ::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  background-clip: padding-box;
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.24);
+  background-clip: padding-box;
+}
+
+/* ── Selection ── */
+::selection { background: rgba(100,100,100,0.25); }
+
+/* ── Focus ring ── */
+:focus-visible {
+  outline: 1.5px solid var(--fg-muted);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* ── Topbar height utility ── */
+.topbar { height: var(--topbar-h); }
+
+/* ── Code editor ── */
+.editor-textarea {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  caret-color: var(--fg);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 21px;
+  padding: 12px 80px 200px 16px;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+  z-index: 2;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.editor-textarea::-webkit-scrollbar { width: 6px; height: 6px; }
+.editor-textarea::-webkit-scrollbar-track { background: transparent; }
+.editor-textarea::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 100px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.18);
+  border-radius: 100px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.editor-textarea::-webkit-scrollbar-corner { background: transparent; }
+
+.editor-highlight {
+  padding: 12px 80px 200px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 21px;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 1;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* ── Current line highlight ── */
+.editor-curline {
+  position: absolute;
+  left: 0; right: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: rgba(255,255,255,0.025); /* STYLE.md §17: --editor-curline */
+  border-left: 2px solid rgba(255,255,255,0.07);
+}
+html.light .editor-curline {
+  background: rgba(0,0,0,0.03);
+  border-left: 2px solid rgba(0,0,0,0.08);
+}
+
+/* ── Search match highlight ── */
+.editor-search-match {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+  background: rgba(251,191,36,0.25);
+  border: 1px solid rgba(251,191,36,0.5);
+  border-radius: 2px;
+}
+.editor-search-match.active {
+  background: rgba(251,191,36,0.45);
+  border-color: rgba(251,191,36,0.9);
+}
+
+/* ── Indent guides ── */
+.editor-indent-guide {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: var(--border-subtle);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Syntax tokens */
+.syn-kw  { color: var(--syn-kw);  font-weight: 500; }
+.syn-fn  { color: var(--syn-fn); }
+.syn-str { color: var(--syn-str); }
+.syn-num { color: var(--syn-num); }
+.syn-com { color: var(--syn-com); font-style: italic; }
+.syn-typ { color: var(--syn-typ); }
+.syn-pkg { color: var(--syn-pkg); }
+.syn-op  { color: var(--syn-op); }
+
+/* ── Topbar label hide below 1200px ── */
+@media (max-width: 1200px) {
+  .topbar-label { display: none; }
+}
+@media (max-width: 960px) {
+  .topbar-label-sm { display: none; }
+}
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-fade-up { animation: fadeUp 200ms ease forwards; }
+.animate-fade-in { animation: fadeIn 150ms ease forwards; }
+.animate-spin    { animation: spin 1s linear infinite; }
+
+/* ── Utility ── */
+.no-select { user-select: none; }
+.truncate  { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

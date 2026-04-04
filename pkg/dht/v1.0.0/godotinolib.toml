@@ -1,0 +1,76 @@
+[package]
+name        = "dht"
+version     = "1.0.0"
+description = "DHT11/DHT22 temperature and humidity sensor"
+author      = "tsuki-team"
+cpp_header  = "DHT.h"
+arduino_lib = "DHT sensor library"
+cpp_class   = "DHT"
+
+aliases = ["DHT"]
+
+# ── Constructor ───────────────────────────────────────────────────────────────
+[[function]]
+go     = "New"
+python = "new"
+cpp    = "DHT({0}, {1})"
+
+# ── Instance methods ──────────────────────────────────────────────────────────
+[[function]]
+go     = "Begin"
+python = "begin"
+cpp    = "{0}.begin()"
+
+[[function]]
+go     = "ReadTemperature"
+python = "read_temperature"
+cpp    = "{0}.readTemperature()"
+
+[[function]]
+go     = "ReadTemperatureF"
+python = "read_temperature_f"
+cpp    = "{0}.readTemperature(true)"
+
+[[function]]
+go     = "ReadHumidity"
+python = "read_humidity"
+cpp    = "{0}.readHumidity()"
+
+[[function]]
+go     = "ComputeHeatIndex"
+python = "compute_heat_index"
+cpp    = "{0}.computeHeatIndex({1}, {2})"
+
+[[function]]
+go     = "IsNan"
+python = "is_nan"
+cpp    = "isnan({1})"
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+[[constant]]
+go     = "DHT11"
+python = "DHT11"
+cpp    = "DHT11"
+
+[[constant]]
+go     = "DHT22"
+python = "DHT22"
+cpp    = "DHT22"
+
+[[constant]]
+go     = "DHT21"
+python = "DHT21"
+cpp    = "DHT21"
+
+# ── Examples ──────────────────────────────────────────────────────────────────
+[[example]]
+dir = "examples/basic"
+
+[[example]]
+dir = "examples/dual_sensor"
+
+[[example]]
+dir = "examples/basic_py"
+
+[[example]]
+dir = "examples/dual_sensor_py"

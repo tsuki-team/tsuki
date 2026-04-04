@@ -13,8 +13,6 @@ cli/go.sum
 *.iss
 ide/public/*
 circuittest.json
-web/node_modules
-web/.next
 tools/keys
 venv/
 .venv/

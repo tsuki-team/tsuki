@@ -9,7 +9,7 @@
   "description": "ESP8266 Generic — WiFi SoC",
   "pins": [
     { "id": "RST",  "label": "RST",  "type": "digital", "rx": 0,  "ry": 6  },
-    { "id": "A0",   "label": "A0",   "type": "analog",  "rx": 0,  "ry": 12, "arduino": 0  },
+    { "id": "A0",   "label": "A0",   "type": "analog",  "rx": 0,  "ry": 12 },
     { "id": "D0",   "label": "D0",   "type": "digital", "rx": 0,  "ry": 18, "arduino": 16 },
     { "id": "D5",   "label": "D5",   "type": "spi",     "rx": 0,  "ry": 24, "arduino": 14 },
     { "id": "D6",   "label": "D6",   "type": "spi",     "rx": 0,  "ry": 30, "arduino": 12 },

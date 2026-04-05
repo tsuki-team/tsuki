@@ -171,7 +171,10 @@ export default function PlatformsSidebar() {
               <PlatformCard
                 key={p.id}
                 platform={p}
-                onInstall={() => setInstallTarget(p)}
+                onInstall={() => {
+                  setBoardPlatformInstalling(p.id, true)
+                  setInstallTarget(p)
+                }}
                 onRemove={() => {}}
                 removing={false}
               />
@@ -188,9 +191,13 @@ export default function PlatformsSidebar() {
       {installTarget && (
         <BoardInstallModal
           platform={installTarget}
-          onClose={() => setInstallTarget(null)}
+          onClose={() => {
+            if (installTarget) setBoardPlatformInstalling(installTarget.id, false)
+            setInstallTarget(null)
+          }}
           onInstalled={(p) => {
             addInstalledPlatform(p)
+            setBoardPlatformInstalling(p.id, false)
             setInstallTarget(null)
           }}
         />

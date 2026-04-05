@@ -57,6 +57,19 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
+/// Compare two semver-like strings (e.g. "1.9.0" vs "1.10.0").
+/// Falls back to lexicographic if parsing fails.
+fn semver_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |s: &str| -> (u64, u64, u64) {
+        let mut parts = s.trim_start_matches('v').split('.');
+        let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        (major, minor, patch)
+    };
+    parse(a).cmp(&parse(b))
+}
+
 fn boards_root() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".tsuki").join("boards"))
 }
@@ -113,7 +126,7 @@ pub fn load_installed_platforms() {
             .filter(|e| e.path().is_dir())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        versions.sort();
+        versions.sort_by(|a, b| semver_cmp(a, b));
         if let Some(ver) = versions.last() {
             let toml_path = board_dir.join(ver).join("tsukiboard.toml");
             if toml_path.exists() {
@@ -571,7 +584,7 @@ pub fn precompile(board_id: &str, use_modules: bool, verbose: bool) -> Result<()
             .filter(|e| e.path().is_dir())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        versions.sort();
+        versions.sort_by(|a, b| semver_cmp(a, b));
         let ver = versions.last()?;
         Some(root.join(board_id).join(ver))
     })() else {
@@ -676,7 +689,7 @@ pub fn list_installed() -> Vec<InstalledPlatform> {
             .filter(|e| e.path().is_dir())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        versions.sort();
+        versions.sort_by(|a, b| semver_cmp(a, b));
         if let Some(ver) = versions.last() {
             let toml_path = board_dir.join(ver).join("tsukiboard.toml");
             let (name, arch) = if let Ok(raw) = std::fs::read_to_string(&toml_path) {

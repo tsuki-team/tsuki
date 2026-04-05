@@ -303,7 +303,7 @@ fn cache_path_for(url: &str) -> PathBuf {
         format!("{:016x}", h)
     };
     home_dir()
-        .unwrap_or_default()
+        .unwrap_or_else(|| std::env::temp_dir())
         .join(".tsuki")
         .join("cache")
         .join(format!("boards_{}.json", hash))
@@ -494,7 +494,9 @@ pub fn install(board_id: &str, version_hint: Option<&str>, opts: &InstallOptions
         let url = format!("{}{}", base_url, filename);
         match http_get_bytes(&url) {
             Ok(data) => {
-                let _ = std::fs::write(dest.join(filename), data);
+                if let Err(e) = std::fs::write(dest.join(filename), &data) {
+                    block.line(&format!("  warn: failed to write {}: {}", filename, e));
+                }
             }
             Err(e) => block.line(&format!("  warn: {}: {}", filename, e)),
         }
@@ -560,7 +562,19 @@ pub fn precompile(board_id: &str, use_modules: bool, verbose: bool) -> Result<()
         }
     };
 
-    let Some(dest) = platform_dir(board_id, "1.0.0") else {
+    // Find the actual installed version directory
+    let Some(dest) = (|| -> Option<PathBuf> {
+        let root = boards_root()?;
+        let board_dir = root.join(board_id);
+        let mut versions: Vec<_> = std::fs::read_dir(&board_dir)
+            .ok()?.flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        versions.sort();
+        let ver = versions.last()?;
+        Some(root.join(board_id).join(ver))
+    })() else {
         block.finish(false, Some("no install dir"));
         return Err(FlashError::Other("could not locate install dir".into()));
     };
@@ -596,14 +610,20 @@ pub fn precompile(board_id: &str, use_modules: bool, verbose: bool) -> Result<()
                 {
                     let final_core = build_dir.join(format!("core-{}.a", arch));
                     let _ = std::fs::copy(&p, &final_core);
-                    let sig_src = build_dir
-                        .join(format!("core-{}", arch))
-                        .join(".core_sig");
-                    if sig_src.exists() {
-                        let _ = std::fs::copy(
-                            &sig_src,
-                            build_dir.join(format!("core-{}.sig", arch)),
-                        );
+                    // The build backend writes .core_sig in the build directory (or a
+                    // core-<arch>/ sub-dir depending on the backend version). Search both.
+                    let sig_candidates = [
+                        build_dir.join(".core_sig"),
+                        build_dir.join(format!("core-{}", arch)).join(".core_sig"),
+                    ];
+                    for sig_src in &sig_candidates {
+                        if sig_src.exists() {
+                            let _ = std::fs::copy(
+                                sig_src,
+                                build_dir.join(format!("core-{}.sig", arch)),
+                            );
+                            break;
+                        }
                     }
                     break;
                 }

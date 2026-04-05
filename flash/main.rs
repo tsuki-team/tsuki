@@ -9,6 +9,7 @@ mod error;
 mod flash;
 mod lib_manager;
 mod cores;
+mod platforms;
 mod sdk;
 mod serial_monitor;
 
@@ -61,7 +62,12 @@ enum Cmd {
     /// Compile then immediately upload
     Run(RunArgs),
     /// Detect connected boards / serial ports
-    Detect,
+    Detect {
+        /// Output machine-readable JSON instead of a human table.
+        /// Each line is one JSON object: {"port":"COM3","board_id":"nano","vid_pid":"1A86:7523","board_name":"Arduino Nano / clone (CH340)"}
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// List all supported boards
     Boards,
     /// Print SDK discovery paths for a board
@@ -251,7 +257,7 @@ fn main() {
         Cmd::Compile(a)        => cmd_compile(a, cli.verbose, cli.debug, cli.quiet),
         Cmd::Upload(a)         => cmd_upload(a, cli.verbose, cli.quiet),
         Cmd::Run(a)            => cmd_run(a, cli.verbose, cli.debug, cli.quiet),
-        Cmd::Detect            => cmd_detect(),
+        Cmd::Detect { json }     => cmd_detect(json),
         Cmd::Boards            => { cmd_boards(); Ok(()) }
         Cmd::SdkInfo { board } => cmd_sdk_info(&board),
         Cmd::Lib(a)            => cmd_lib(a, cli.verbose),
@@ -391,12 +397,38 @@ fn cmd_run(args: RunArgs, verbose: bool, debug: bool, quiet: bool) -> Result<()>
     Ok(())
 }
 
-fn cmd_detect() -> Result<()> {
+fn cmd_detect(json: bool) -> Result<()> {
     let ports = detect::detect_all();
     if ports.is_empty() {
-        warn("No serial ports found");
+        if json {
+            // Empty JSON array so callers don't need to handle missing output.
+            println!("[]");
+        } else {
+            warn("No serial ports found");
+        }
         return Ok(());
     }
+
+    if json {
+        // One JSON object per line (newline-delimited JSON / NDJSON).
+        // Avoids any human-table ambiguity when parsed by the IDE or scripts.
+        // Format:
+        //   {"port":"COM3","board_id":"nano","vid_pid":"1A86:7523","board_name":"Arduino Nano / clone (CH340)"}
+        for p in &ports {
+            let board_id   = p.board_id  .unwrap_or("unknown");
+            let board_name = p.board_name.unwrap_or("—");
+            let vid_pid    = p.vid_pid
+                .map(|(v, pid)| format!("{:04X}:{:04X}", v, pid))
+                .unwrap_or_else(|| "—".into());
+            // Manual JSON serialisation — keeps the binary dependency-free.
+            // All values are escaped minimally (no control chars in port names).
+            fn esc(s: &str) -> String { s.replace('\\', "\\\\").replace('"', "\\\"") }
+            println!(r#"{{"port":"{}","board_id":"{}","vid_pid":"{}","board_name":"{}"}}"#,
+                esc(&p.port), esc(board_id), esc(&vid_pid), esc(board_name));
+        }
+        return Ok(());
+    }
+
     let (b, d, r) = ansi_bdr();
     println!("  {}{:<20}  {:<15}  {:<8}  {}{}", b, "PORT", "BOARD", "VID:PID", "NAME", r);
     println!("  {}{}{}", d, "─".repeat(66), r);

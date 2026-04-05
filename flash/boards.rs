@@ -56,8 +56,8 @@ impl Board {
 
     /// Find a board by its short ID (case-insensitive).
     pub fn find(id: &str) -> Option<&'static Board> {
-        let id_lower = id.to_lowercase();
-        BOARDS.iter().find(|b| b.id.eq_ignore_ascii_case(&id_lower))
+        BOARDS.iter().find(|b| b.id.eq_ignore_ascii_case(id))
+            .or_else(|| crate::platforms::find_dynamic(id))
     }
 
     /// The `-mmcu` flag value (AVR only).
@@ -208,8 +208,14 @@ static BOARDS: &[Board] = &[
         defines: &["ARDUINO_SAM_DUE", "ARDUINO_ARCH_SAM", "__SAM3X8E__"],
     },
     // ── RP2040 ────────────────────────────────────────────────────────────────
-    // TEMP HIDDEN: Board { id: "pico", name: "Raspberry Pi Pico", fqbn: "rp2040:rp2040:rpipico", variant: "rpipico", flash_kb: 2048, ram_kb: 264, toolchain: Toolchain::Rp2040, defines: &["ARDUINO_RASPBERRY_PI_PICO", "ARDUINO_ARCH_RP2040", "PICO_RP2040=1", "PICO_BOARD=\"rpipico\""] },
-    // TEMP HIDDEN: Board { id: "xiao_rp2040", name: "Seeed XIAO RP2040", fqbn: "rp2040:rp2040:seeed_xiao_rp2040", variant: "seeed_xiao_rp2040", flash_kb: 2048, ram_kb: 264, toolchain: Toolchain::Rp2040, defines: &["ARDUINO_SEEED_XIAO_RP2040", "ARDUINO_ARCH_RP2040", "SEEED_XIAO_RP2040", "PICO_RP2040=1", "PICO_BOARD=\"seeed_xiao_rp2040\""] },
+    Board {
+        id: "pico", name: "Raspberry Pi Pico",
+        fqbn: "rp2040:rp2040:rpipico",
+        variant: "rpipico",
+        flash_kb: 2048, ram_kb: 264,
+        toolchain: Toolchain::Rp2040,
+        defines: &["ARDUINO_RASPBERRY_PI_PICO", "ARDUINO_ARCH_RP2040", "PICO_RP2040=1", "PICO_BOARD=\"rpipico\""],
+    },
     // ── ESP32 ─────────────────────────────────────────────────────────────────
     Board {
         id: "esp32", name: "ESP32 Dev Module",

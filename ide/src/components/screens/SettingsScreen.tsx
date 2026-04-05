@@ -1389,6 +1389,175 @@ function AppearanceTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Arduino-CLI install modal
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ArduinoCliInstallModal({ onClose, onInstalled }: { onClose: () => void; onInstalled: (path: string) => void }) {
+  const [version, setVersion]   = useState('latest')
+  const [status,  setStatus]    = useState<'idle' | 'installing' | 'done' | 'error'>('idle')
+  const [log,     setLog]       = useState<string[]>([])
+  const logEndRef               = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [log])
+
+  function appendLog(line: string) { setLog(prev => [...prev, line]) }
+
+  async function install() {
+    setStatus('installing')
+    setLog([])
+    try {
+      const { spawnProcess, getHomeDir } = await import('@/lib/tauri')
+      const homeDir = await getHomeDir()
+      if (!homeDir) throw new Error('Cannot determine home directory')
+
+      const isWindows = navigator.userAgent.toLowerCase().includes('win')
+      const isMac     = navigator.userAgent.toLowerCase().includes('mac')
+      const sep       = isWindows ? '\\' : '/'
+      const toolsDir  = `${homeDir}${sep}.tsuki${sep}tools`
+      const exeName   = isWindows ? 'arduino-cli.exe' : 'arduino-cli'
+      const outPath   = `${toolsDir}${sep}${exeName}`
+
+      // Resolve "latest" via the GitHub API
+      let ver = version.trim().replace(/^v/, '') || 'latest'
+      if (ver === 'latest') {
+        appendLog('Fetching latest version from GitHub…')
+        const res  = await fetch('https://api.github.com/repos/arduino/arduino-cli/releases/latest')
+        const data = await res.json() as { tag_name: string }
+        ver = data.tag_name.replace(/^v/, '')
+        appendLog(`Latest: v${ver}`)
+      }
+
+      const platform = isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux'
+      const arch     = '64bit'
+      const ext      = isWindows ? 'zip' : 'tar.gz'
+      const fileName = `arduino-cli_${ver}_${platform}_${arch}.${ext}`
+      const url      = `https://github.com/arduino/arduino-cli/releases/download/v${ver}/${fileName}`
+      appendLog(`Downloading ${fileName}…`)
+
+      const run = async (cmd: string, args: string[]) => {
+        const h    = await spawnProcess(cmd, args, undefined, (l, e) => appendLog(e ? `[err] ${l}` : l))
+        const code = await h.done
+        h.dispose()
+        if (code !== 0) throw new Error(`${cmd} exited with code ${code}`)
+      }
+
+      if (isWindows) {
+        const ps = [
+          `$ErrorActionPreference='Stop'`,
+          `New-Item -ItemType Directory -Force -Path '${toolsDir}' | Out-Null`,
+          `$tmp = Join-Path $env:TEMP 'acli-install-${Date.now()}'`,
+          `New-Item -ItemType Directory -Force -Path $tmp | Out-Null`,
+          `$zip = Join-Path $tmp 'acli.zip'`,
+          `Write-Output 'Downloading…'`,
+          `Invoke-WebRequest -Uri '${url}' -OutFile $zip -UseBasicParsing`,
+          `Write-Output 'Extracting…'`,
+          `Expand-Archive -Path $zip -DestinationPath $tmp -Force`,
+          `$exe = Get-ChildItem -Path $tmp -Filter 'arduino-cli.exe' -Recurse | Select-Object -First 1`,
+          `Copy-Item -Path $exe.FullName -Destination '${outPath}' -Force`,
+          `Remove-Item -Path $tmp -Recurse -Force`,
+          `Write-Output 'Done'`,
+        ].join('; ')
+        await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps])
+      } else {
+        const tmp = `/tmp/acli-install-${Date.now()}`
+        await run('mkdir',  ['-p', toolsDir])
+        await run('mkdir',  ['-p', tmp])
+        appendLog('Downloading…')
+        await run('curl',   ['-L', '-o', `${tmp}/acli.${ext}`, '--progress-bar', url])
+        appendLog('Extracting…')
+        await run('tar',    ['-xzf', `${tmp}/acli.${ext}`, '-C', tmp])
+        await run('cp',     [`${tmp}/arduino-cli`, outPath])
+        await run('chmod',  ['+x', outPath])
+        await run('rm',     ['-rf', tmp])
+      }
+
+      appendLog(`Installed → ${outPath}`)
+      setStatus('done')
+      onInstalled(outPath)
+    } catch (e: unknown) {
+      appendLog(`Error: ${e instanceof Error ? e.message : String(e)}`)
+      setStatus('error')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+      <div className="flex flex-col rounded-lg border border-[var(--border)] overflow-hidden" style={{ width: 480, maxHeight: '80vh', background: 'var(--surface-2)' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)]">
+          <div className="flex items-center gap-2">
+            <Download size={14} className="text-[var(--fg-muted)]" />
+            <span className="text-[13px] font-medium text-[var(--fg)]">Install arduino-cli</span>
+          </div>
+          <button onClick={onClose} className="text-[var(--fg-faint)] hover:text-[var(--fg)] transition-colors"><X size={14} /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex flex-col gap-4 p-5 overflow-y-auto flex-1">
+          <p className="text-[12px] text-[var(--fg-muted)] leading-relaxed">
+            Downloads the official arduino-cli binary from GitHub and installs it to{' '}
+            <code className="text-[var(--fg)] bg-[var(--surface-3)] px-1 py-0.5 rounded text-[11px]">~/.tsuki/tools/</code>.
+            The path is updated automatically in settings on success.
+          </p>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10.5px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Version</label>
+            <Input
+              value={version}
+              onChange={e => setVersion(e.target.value)}
+              placeholder="latest"
+              disabled={status === 'installing'}
+              className="font-mono text-[12px]"
+            />
+            <span className="text-[11px] text-[var(--fg-faint)]">
+              <code className="text-[var(--fg-muted)]">latest</code> fetches the newest release, or enter a specific version like <code className="text-[var(--fg-muted)]">1.1.2</code>
+            </span>
+          </div>
+
+          {log.length > 0 && (
+            <div className="rounded border border-[var(--border)] overflow-y-auto" style={{ maxHeight: 180, background: 'var(--surface-1)', padding: '8px 12px' }}>
+              {log.map((line, i) => (
+                <div key={i} className={clsx('font-mono text-[11px] leading-snug',
+                  line.startsWith('[err]') || line.startsWith('Error:') ? 'text-[var(--err)]' : 'text-[var(--fg-muted)]'
+                )}>
+                  {line}
+                </div>
+              ))}
+              <div ref={logEndRef} />
+            </div>
+          )}
+
+          {status === 'done' && (
+            <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--ok)' }}>
+              <Check size={13} /> Installed — path updated in settings.
+            </div>
+          )}
+          {status === 'error' && (
+            <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--err)' }}>
+              <AlertTriangle size={13} /> Installation failed. Check the log above.
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--border)]">
+          <Btn variant="ghost" size="xs" onClick={onClose} disabled={status === 'installing'}>Cancel</Btn>
+          {status !== 'done'
+            ? <Btn size="xs" onClick={install} disabled={status === 'installing'} className="flex items-center gap-1.5">
+                {status === 'installing'
+                  ? <><RefreshCw size={11} className="animate-spin" /> Installing…</>
+                  : <><Download size={11} /> Install</>
+                }
+              </Btn>
+            : <Btn size="xs" onClick={onClose}>Done</Btn>
+          }
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  CLI Tools tab
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1396,6 +1565,7 @@ function CliTab() {
   const { settings, updateSetting, addLog } = useStore()
   const [detecting, setDetecting] = useState<string | null>(null)
   const [toolStatus, setToolStatus] = useState<Record<string, 'ok' | 'warn' | null>>({ tsuki: null, core: null, arduino: null })
+  const [showInstallModal, setShowInstallModal] = useState(false)
 
   async function detect(tool: string, key: keyof SettingsState) {
     setDetecting(tool)
@@ -1449,8 +1619,15 @@ function CliTab() {
             {detecting === 'arduino' ? <RefreshCw size={11} className="animate-spin" /> : 'Detect'}
           </Btn>
           <Btn variant="outline" size="xs" onClick={() => browseExe('arduinoCliPath')}><FolderOpen size={11} /></Btn>
+          <Btn variant="outline" size="xs" onClick={() => setShowInstallModal(true)} className="flex items-center gap-1"><Download size={11} />Install</Btn>
         </div>
       </SettingsField>
+      {showInstallModal && (
+        <ArduinoCliInstallModal
+          onClose={() => setShowInstallModal(false)}
+          onInstalled={path => { updateSetting('arduinoCliPath', path); setShowInstallModal(false) }}
+        />
+      )}
       <SettingsField name="avrdude path" desc="Used by tsuki-flash for AVR board uploads">
         <Input value={settings.avrDudePath} onChange={e => updateSetting('avrDudePath', e.target.value)} placeholder="auto" />
       </SettingsField>
@@ -1617,6 +1794,20 @@ function DefaultsTab() {
 
       <GroupHeader title="Package registries" />
       <RegistrySourcesEditor />
+
+      <GroupHeader title="Board registries" />
+      <SettingsField
+        name="Board Registry"
+        desc="URL of the boards.json registry for downloadable board platforms."
+      >
+        <input
+          type="text"
+          value={settings.boardsRegistryUrl ?? ''}
+          onChange={e => updateSetting('boardsRegistryUrl', e.target.value)}
+          className="flex-1 font-mono text-xs bg-[var(--surface)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none text-[var(--fg)] placeholder-[var(--fg-faint)] focus:border-[var(--fg-faint)]"
+          placeholder="https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/boards/boards.json"
+        />
+      </SettingsField>
 
       <GroupHeader title="Behaviour" />
       <SettingsField name="verbose" desc="Show detailed CLI output by default">

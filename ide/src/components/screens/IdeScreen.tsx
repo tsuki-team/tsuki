@@ -17,15 +17,18 @@ import dynamic                from 'next/dynamic'
 import { clsx }               from 'clsx'
 import { AppChrome }          from '@/components/shared/AppChrome'
 import NewProjectModal        from '@/components/other/NewProjectModal'
+import PortSelectModal, { type PortSelectOutcome } from '@/components/other/PortSelectModal'
 import FilesSidebar           from '@/components/other/FilesSidebar'
 import PackagesSidebar        from '@/components/other/PackagesSidebar'
 import ExamplesSidebar        from '@/components/other/ExamplesSidebar'
+import PlatformsSidebar       from '@/components/other/PlatformsSidebar'
 import CodeEditor             from '@/components/other/CodeEditor'
 import MigrationModal, { applyMigrations } from '@/components/other/MigrationModal'
 import { showContextMenu }    from '@/components/shared/ContextMenu'
 import {
   Files, GitBranch, Package, BookOpen,
   Code2, Cpu, Share2, ChevronRight, X, AlertTriangle,
+  Copy, Save, FolderOpen, RefreshCw, Settings, Terminal,
 } from 'lucide-react'
 import type { ElementType } from 'react'
 
@@ -42,16 +45,30 @@ const WebkitPanel       = dynamic(() => import('@/components/experiments/WebKitP
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BOARDS = [
-  'uno', 'nano', 'nano_old', 'mega', 'leonardo', 'micro',
-  'pro_mini_5v', 'pro_mini_3v3',
-  'esp32', 'esp32s2', 'esp32c3', 'esp8266', 'd1_mini', 'nodemcu',
+  // ── AVR ───────────────────────────────────────────────────
+  'uno',          // Arduino Uno  (ATmega328P)
+  'nano',         // Arduino Nano (ATmega328P)
+  'mega',         // Arduino Mega 2560
+  // ── ESP ───────────────────────────────────────────────────
+  'esp32',        // ESP32 Dev Module
+  'esp8266',      // ESP8266 Generic
+  // ── RP2040 ────────────────────────────────────────────────
+  'pico',         // Raspberry Pi Pico
 ]
 
-// Boards experimentales — no expuestos en el selector público.
-// Se mantienen aquí para compatibilidad interna con proyectos ya creados.
+// Boards that exist in the backend but are hidden from the public selector.
+// Kept here so projects created with these boards still work.
+const HIDDEN_BOARDS = [
+  'nano_old', 'leonardo', 'micro', 'pro_mini_5v', 'pro_mini_3v3', 'due',
+  'esp32s2', 'esp32c3', 'd1_mini', 'nodemcu',
+]
+
+// Boards with partial/experimental support. Mapped to a warning message shown
+// in the IDE banner when the project targets that board.
 const EXPERIMENTAL_BOARDS: Record<string, string> = {
-  pico:        'El soporte para RP2040 es experimental. Requiere el core earlephilhower instalado.',
-  xiao_rp2040: 'El soporte para este board es experimental. Requiere el core earlephilhower instalado.',
+  pico:    'El soporte para Raspberry Pi Pico (RP2040) es experimental. Algunas funciones pueden no estar disponibles.',
+  esp32s2: 'El soporte para ESP32-S2 es experimental y puede presentar errores de compilación.',
+  esp32c3: 'El soporte para ESP32-C3 es experimental y puede presentar errores de compilación.',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +104,12 @@ export default function IdeScreen() {
   const [workstation,    setWorkstation]    = useState<Workstation>('code')
   const [sandboxOpen,    setSandboxOpen]    = useState(false)
   const [resizingSidebar, setResizingSidebar] = useState(false)
+  const [showPortSelect,  setShowPortSelect]  = useState(false)
+  // Stores the action to run once the user picks a port: 'flash' | 'run'
+  const pendingFlashAction = useRef<'flash' | 'run'>('flash')
+  // Live sidebar width tracked in a ref during drag — avoids React re-renders
+  // and settings persistence on every mouse-move pixel.
+  const sidebarWidthRef = useRef<number>(settings.sidebarWidth)
 
   // ── Experiment flags ──────────────────────────────────────────────────────
 
@@ -138,15 +161,30 @@ export default function IdeScreen() {
 
   function handleFlash() {
     if (!projectPath) { addLog('warn', 'No project path — cannot flash'); return }
-    dispatchBuild(tsukiBin(), ['upload', '--board', board], projectPath)
+    pendingFlashAction.current = 'flash'
+    setShowPortSelect(true)
   }
 
   function handleRun() {
     if (!projectPath) { addLog('warn', 'No project path'); return }
-    const buildArgs  = ['build', '--compile', '--board', board]
-    const uploadArgs = ['upload', '--board', board]
-    if (settings.verbose) buildArgs.push('--verbose')
-    dispatchBuild(tsukiBin(), buildArgs, projectPath, uploadArgs)
+    pendingFlashAction.current = 'run'
+    setShowPortSelect(true)
+  }
+
+  function onPortSelected(outcome: PortSelectOutcome) {
+    setShowPortSelect(false)
+    if (outcome.cancel) return
+    const port = outcome.port
+    if (pendingFlashAction.current === 'flash') {
+      const args = ['upload', '--board', board, '--port', port]
+      if (settings.verbose) args.push('--verbose')
+      dispatchBuild(tsukiBin(), args, projectPath ?? undefined)
+    } else {
+      const buildArgs  = ['build', '--compile', '--board', board]
+      const uploadArgs = ['upload', '--board', board, '--port', port]
+      if (settings.verbose) buildArgs.push('--verbose')
+      dispatchBuild(tsukiBin(), buildArgs, projectPath ?? undefined, uploadArgs)
+    }
   }
 
   function handleMonitor() {
@@ -198,17 +236,44 @@ export default function IdeScreen() {
   }, []) // eslint-disable-line
 
   // ── Sidebar resize ────────────────────────────────────────────────────────
+  // We mutate the DOM directly during drag so React never re-renders on every
+  // pixel, then commit the final value to the store only on mouseUp.  This
+  // removes the jank caused by updating settings (→ persistence) on each event.
 
   useEffect(() => {
     if (!resizingSidebar) return
+
+    // Keep the ref in sync with the current stored width when a drag starts.
+    sidebarWidthRef.current = settings.sidebarWidth
+
+    // Prevent text selection and iframe pointer-capture during the drag.
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor     = 'col-resize'
+
     function onMove(e: MouseEvent) {
       const newW = Math.max(140, Math.min(480, e.clientX - 40))
-      updateSetting('sidebarWidth', newW)
+      sidebarWidthRef.current = newW
+      // Apply directly to the DOM — zero React involvement, zero persistence.
+      const el = document.getElementById('tsuki-sidebar')
+      if (el) el.style.width = newW + 'px'
     }
-    function onUp() { setResizingSidebar(false) }
+
+    function onUp() {
+      document.body.style.userSelect = ''
+      document.body.style.cursor     = ''
+      setResizingSidebar(false)
+      // Persist only once, when the user releases the mouse button.
+      updateSetting('sidebarWidth', sidebarWidthRef.current)
+    }
+
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup',   onUp)
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup',   onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor     = ''
+    }
   }, [resizingSidebar]) // eslint-disable-line
 
   // ── Adaptive sidebar ──────────────────────────────────────────────────────
@@ -228,8 +293,9 @@ export default function IdeScreen() {
 
   const sidebarTabs = [
     { id: 'files',    icon: <Files size={15} />,      label: 'Files' },
-    { id: 'packages', icon: <Package size={15} />,    label: 'Packages' },
-    { id: 'examples', icon: <BookOpen size={15} />,   label: 'Examples' },
+    { id: 'packages',  icon: <Package size={15} />,    label: 'Packages'  },
+    { id: 'platforms', icon: <Cpu size={15} />,       label: 'Platforms' },
+    { id: 'examples',  icon: <BookOpen size={15} />,  label: 'Examples'  },
     ...(gitEnabled
       ? [{ id: 'git', icon: <GitBranch size={15} />, label: 'Git' }]
       : []),
@@ -238,8 +304,9 @@ export default function IdeScreen() {
   function renderSidebarContent() {
     switch (sidebarTab) {
       case 'files':    return <FilesSidebar />
-      case 'packages': return <PackagesSidebar />
-      case 'examples': return <ExamplesSidebar />
+      case 'packages':  return <PackagesSidebar />
+      case 'platforms': return <PlatformsSidebar />
+      case 'examples':  return <ExamplesSidebar />
       case 'git':      return gitEnabled ? <GitSidebar /> : null
       default:         return null
     }
@@ -306,9 +373,13 @@ export default function IdeScreen() {
 
         {/* Left sidebar */}
         <div
+          id="tsuki-sidebar"
           className={clsx(
-            'flex-shrink-0 flex flex-col overflow-hidden border-r border-[var(--border)] transition-[width] duration-150',
+            'flex-shrink-0 flex flex-col overflow-hidden border-r border-[var(--border)]',
             sidebarOpen ? '' : 'w-0',
+            // Only animate open/close transitions, not drag-resize (the drag
+            // writes width directly to the DOM via the ref, bypassing React).
+            !resizingSidebar && 'transition-[width] duration-150',
           )}
           style={sidebarOpen ? { width: settings.sidebarWidth, background: 'var(--surface-1)' } : {}}
         >
@@ -433,6 +504,10 @@ export default function IdeScreen() {
 
       {showNewProject && (
         <NewProjectModal onClose={() => setShowNewProject(false)} />
+      )}
+
+      {showPortSelect && (
+        <PortSelectModal onResult={onPortSelected} />
       )}
     </div>
   )
@@ -585,6 +660,11 @@ function EditorTabBar({ openTabs, activeTabIdx, activeNode, parentNode, projectN
         <div
           className="h-6 flex items-center px-3 gap-1 border-b border-[var(--border-subtle)] text-xs text-[var(--fg-muted)] flex-shrink-0"
           style={{ background: 'var(--surface)' }}
+          onContextMenu={(e: React.MouseEvent) => showContextMenu(e, [
+            { label: 'Copy path', icon: <Copy size={11} />, action: () => navigator.clipboard.writeText(activeNode.path || activeNode.name).catch(() => {}) },
+            { label: 'Copy filename', icon: <Copy size={11} />, action: () => navigator.clipboard.writeText(activeNode.name).catch(() => {}) },
+            { label: 'Save file', icon: <Save size={11} />, shortcut: 'Ctrl+S', sep: true, action: () => saveActiveFile() },
+          ])}
         >
           <span>{projectName}</span>
           {parentNode && (
@@ -603,8 +683,16 @@ function EditorTabBar({ openTabs, activeTabIdx, activeNode, parentNode, projectN
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EmptyEditor() {
+  const { setScreen, setBottomTab } = useStore()
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-3 select-none text-[var(--fg-faint)]">
+    <div
+      className="flex-1 flex flex-col items-center justify-center gap-3 select-none text-[var(--fg-faint)]"
+      onContextMenu={(e: React.MouseEvent) => showContextMenu(e, [
+        { label: 'Open file', icon: <FolderOpen size={11} />, action: () => {} },
+        { label: 'Open terminal', icon: <Terminal size={11} />, action: () => setBottomTab('terminal') },
+        { label: 'Settings', icon: <Settings size={11} />, sep: true, action: () => setScreen('settings') },
+      ])}
+    >
       <svg width="40" height="40" viewBox="0 0 40 40" fill="none" opacity={0.2}>
         <rect x="6" y="4" width="28" height="32" rx="3" stroke="currentColor" strokeWidth="1.5" />
         <line x1="12" y1="13" x2="28" y2="13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />

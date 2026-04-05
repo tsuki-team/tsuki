@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 use crate::boards::Board;
 use crate::error::{FlashError, Result};
 use crate::sdk::{SdkPaths};
-use super::cache::{CacheManifest, obj_path, hash_str};
+use super::cache::{CacheManifest, obj_path, hash_str, hash_file};
 use super::{CompileRequest, CompileResult};
 
 pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<CompileResult> {
@@ -107,6 +107,27 @@ pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<Compil
     let core_dir  = req.build_dir.join("core-avr");
     std::fs::create_dir_all(&core_dir)?;
     let core_a = req.build_dir.join("core-avr.a");
+
+    // ── Pre-compiled core shortcut ────────────────────────────────────────────
+    // If the user installed this board via `tsuki-flash platforms install`,
+    // a pre-compiled core.a is stored at ~/.tsuki/boards/<id>/<version>/precompiled/.
+    // Reuse it to skip the 30-90 s core build on the very first project compilation.
+    if !core_a.exists() {
+        if let (Some(precomp), Some(precomp_sig)) = (
+            crate::platforms::precompiled_core(board.id),
+            crate::platforms::precompiled_core_sig(board.id),
+        ) {
+            if precomp_sig.trim() == core_sig {
+                if let Ok(_) = std::fs::copy(&precomp, &core_a) {
+                    let _ = std::fs::write(core_dir.join(".core_sig"), &core_sig);
+                    if req.verbose {
+                        eprintln!("  [core] reusing pre-compiled core from board platform");
+                    }
+                }
+            }
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     build_core(&cc, &cxx, &ar, &sdk.toolchain_bin, &sdk.core_dir, &core_dir, &core_a,
                &includes, &cflags, &cxxflags, &core_sig, req.verbose)?;
@@ -213,70 +234,88 @@ pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<Compil
     // Without this step the linker sees the headers (so the sketch compiles)
     // but never sees the implementations — producing "undefined reference to
     // DHT::begin" and similar errors.
+    //
+    // Cache: a SHA-256 fingerprint of every library source file's content plus
+    // the compiler flags is stored in .libs_sig.  If it matches and libs.a
+    // exists, the compilation step is skipped entirely.
     let libs_a = req.build_dir.join("libs.a");
     let lib_obj_dir = req.build_dir.join("lib_objs");
     std::fs::create_dir_all(&lib_obj_dir)?;
 
-    let mut lib_obj_files: Vec<PathBuf> = Vec::new();
-    for src_dir in &req.lib_source_dirs {
-        // Collect .cpp and .c files at depth-1 only (skip examples/, test/, …)
-        let lib_sources: Vec<PathBuf> = std::fs::read_dir(src_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .filter(|e| {
-                e.path().extension()
-                    .and_then(|x| x.to_str())
-                    .map(|x| matches!(x, "cpp" | "c"))
-                    .unwrap_or(false)
-            })
-            .map(|e| e.path())
-            .collect();
+    let libs_sig      = avr_compute_libs_sig(&req.lib_source_dirs, &flags_sig);
+    let libs_sentinel = lib_obj_dir.join(".libs_sig");
+    let libs_fresh    = libs_a.exists()
+        && std::fs::read_to_string(&libs_sentinel)
+            .map(|s| s.trim() == libs_sig.as_str())
+            .unwrap_or(false);
 
-        for src in lib_sources {
-            let obj = obj_path(&lib_obj_dir, &src);
-            let is_c = src.extension().and_then(|e| e.to_str()) == Some("c");
-            let compiler = if is_c { &cc } else { &cxx };
+    if !libs_fresh {
+        let mut lib_obj_files: Vec<PathBuf> = Vec::new();
+        for src_dir in &req.lib_source_dirs {
+            // Collect .cpp and .c files at depth-1 only (skip examples/, test/, …)
+            let lib_sources: Vec<PathBuf> = std::fs::read_dir(src_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .filter(|e| {
+                    e.path().extension()
+                        .and_then(|x| x.to_str())
+                        .map(|x| matches!(x, "cpp" | "c"))
+                        .unwrap_or(false)
+                })
+                .map(|e| e.path())
+                .collect();
 
-            let mut cmd = Command::new(compiler);
-            with_toolchain_path(&mut cmd, &sdk.toolchain_bin);
-            cmd.args(&includes);
-            if is_c { cmd.args(&cflags); } else { cmd.args(&cxxflags); }
-            cmd.arg("-c").arg(&src).arg("-o").arg(&obj);
+            for src in lib_sources {
+                let obj = obj_path(&lib_obj_dir, &src);
+                let is_c = src.extension().and_then(|e| e.to_str()) == Some("c");
+                let compiler = if is_c { &cc } else { &cxx };
 
-            if req.verbose {
-                eprintln!("  [lib] {}", src.display());
-            }
+                let mut cmd = Command::new(compiler);
+                with_toolchain_path(&mut cmd, &sdk.toolchain_bin);
+                cmd.args(&includes);
+                if is_c { cmd.args(&cflags); } else { cmd.args(&cxxflags); }
+                cmd.arg("-c").arg(&src).arg("-o").arg(&obj);
 
-            let out = cmd.output().expect("failed to spawn compiler for library");
-            if out.status.success() {
-                lib_obj_files.push(obj);
-            } else {
-                // Non-fatal: some library .cpp files may fail to compile in
-                // isolation (missing platform headers, etc.).  Log and skip
-                // rather than aborting the whole build.
                 if req.verbose {
-                    let msg = String::from_utf8_lossy(&out.stderr);
-                    eprintln!("  [lib warn] {}: {}", src.display(), msg.trim());
+                    eprintln!("  [lib] {}", src.display());
+                }
+
+                let out = cmd.output().expect("failed to spawn compiler for library");
+                if out.status.success() {
+                    lib_obj_files.push(obj);
+                } else {
+                    // Non-fatal: some library .cpp files may fail to compile in
+                    // isolation (missing platform headers, etc.).  Log and skip
+                    // rather than aborting the whole build.
+                    if req.verbose {
+                        let msg = String::from_utf8_lossy(&out.stderr);
+                        eprintln!("  [lib warn] {}: {}", src.display(), msg.trim());
+                    }
                 }
             }
         }
-    }
 
-    // Archive all successfully compiled library objects into libs.a
-    if !lib_obj_files.is_empty() {
-        let mut ar_cmd = Command::new(&ar);
-        with_toolchain_path(&mut ar_cmd, &sdk.toolchain_bin);
-        ar_cmd.args(["rcs", libs_a.to_str().unwrap()]);
-        for obj in &lib_obj_files {
-            ar_cmd.arg(obj);
+        // Archive all successfully compiled library objects into libs.a
+        if !lib_obj_files.is_empty() {
+            let mut ar_cmd = Command::new(&ar);
+            with_toolchain_path(&mut ar_cmd, &sdk.toolchain_bin);
+            ar_cmd.args(["rcs", libs_a.to_str().unwrap()]);
+            for obj in &lib_obj_files {
+                ar_cmd.arg(obj);
+            }
+            let ar_out = ar_cmd.output()?;
+            if !ar_out.status.success() && req.verbose {
+                let msg = String::from_utf8_lossy(&ar_out.stderr);
+                eprintln!("  [lib warn] ar failed: {}", msg.trim());
+            }
         }
-        let ar_out = ar_cmd.output()?;
-        if !ar_out.status.success() && req.verbose {
-            let msg = String::from_utf8_lossy(&ar_out.stderr);
-            eprintln!("  [lib warn] ar failed: {}", msg.trim());
+        if libs_a.exists() || req.lib_source_dirs.is_empty() {
+            let _ = std::fs::write(&libs_sentinel, &libs_sig);
         }
+    } else if req.verbose {
+        eprintln!("  [libs] cache hit — skipping library recompilation");
     }
 
     // ── Step 5: Link elf ──────────────────────────────────────────────────
@@ -607,4 +646,30 @@ fn firmware_size(bin_dir: &Path, elf: &Path, board: &Board) -> String {
             }
         }
     }
+}
+
+/// Compute a stable cache key for the AVR libs.a archive.
+/// Covers compiler flags + content of every library source file.
+fn avr_compute_libs_sig(lib_source_dirs: &[PathBuf], flags_sig: &str) -> String {
+    let mut sig = flags_sig.to_owned();
+    let mut all_sources: Vec<PathBuf> = lib_source_dirs.iter()
+        .flat_map(|d| {
+            std::fs::read_dir(d)
+                .into_iter().flatten().flatten()
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .filter(|e| matches!(
+                    e.path().extension().and_then(|x| x.to_str()).unwrap_or(""),
+                    "cpp" | "c"
+                ))
+                .map(|e| e.path())
+        })
+        .collect();
+    all_sources.sort();
+    for src in &all_sources {
+        sig.push_str(&src.to_string_lossy());
+        if let Some(h) = hash_file(&src) {
+            sig.push_str(&h);
+        }
+    }
+    hash_str(&sig)
 }

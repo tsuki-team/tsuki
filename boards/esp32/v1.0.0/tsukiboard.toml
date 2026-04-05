@@ -1,0 +1,67 @@
+# ── Board identity ─────────────────────────────────────────────────────────────
+[board]
+id          = "esp32"
+name        = "ESP32 Dev Module"
+version     = "1.0.0"
+description = "Espressif ESP32 dual-core 32-bit microcontroller development board"
+author      = "tsuki-team"
+fqbn        = "esp32:esp32:esp32"
+variant     = "esp32"
+flash_kb    = 4096
+ram_kb      = 520
+f_cpu       = 240000000
+
+# ── Companion files bundled with this platform ─────────────────────────────────
+[files]
+sandbox = "sandbox.json"
+ports   = "ports.json"
+readme  = "README.md"
+
+# ── Toolchain ──────────────────────────────────────────────────────────────────
+[toolchain]
+type        = "esp32"
+variant     = "esp32"
+upload_tool = "esptool"
+upload_baud = 921600
+
+# ── USB auto-detection ─────────────────────────────────────────────────────────
+[detection]
+name_patterns = ["ESP32", "ESP-WROOM", "CP2102", "CH340"]
+
+[[detection.usb]]
+vid  = "10C4"
+pid  = "EA60"
+chip = "Silicon Labs CP2102"
+
+[[detection.usb]]
+vid  = "1A86"
+pid  = "7523"
+chip = "CH340"
+
+[[detection.usb]]
+vid  = "0403"
+pid  = "6001"
+chip = "FTDI FT232"
+
+[[detection.usb]]
+vid  = "0403"
+pid  = "6015"
+chip = "FTDI FT231X"
+
+[[detection.usb]]
+vid  = "239A"
+pid  = "8029"
+chip = "Adafruit Feather ESP32"
+
+# ── Compiler defines ───────────────────────────────────────────────────────────
+[[define]]
+name = "ARDUINO_ESP32_DEV"
+
+[[define]]
+name = "ESP32"
+
+[[define]]
+name = "ARDUINO_ARCH_ESP32"
+
+[[define]]
+name = "CONFIG_IDF_TARGET_ESP32"

@@ -1,0 +1,10 @@
+{
+  "usb": [
+    { "vid": "10C4", "pid": "EA60", "name": "Silicon Labs CP2102" },
+    { "vid": "1A86", "pid": "7523", "name": "CH340"               },
+    { "vid": "0403", "pid": "6001", "name": "FTDI FT232RL"        },
+    { "vid": "0403", "pid": "6015", "name": "FTDI FT231X"         },
+    { "vid": "239A", "pid": "8029", "name": "Adafruit Feather ESP32" }
+  ],
+  "name_patterns": ["ESP32", "ESP-WROOM", "CP2102", "CH340"]
+}

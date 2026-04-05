@@ -1,0 +1,53 @@
+[board]
+id          = "esp8266"
+name        = "ESP8266 Generic"
+version     = "1.0.0"
+description = "Espressif ESP8266 single-core WiFi microcontroller"
+author      = "tsuki-team"
+fqbn        = "esp8266:esp8266:generic"
+variant     = "generic"
+flash_kb    = 4096
+ram_kb      = 80
+f_cpu       = 80000000
+
+[files]
+sandbox = "sandbox.json"
+ports   = "ports.json"
+readme  = "README.md"
+
+[toolchain]
+type        = "esp8266"
+upload_tool = "esptool"
+upload_baud = 921600
+
+[detection]
+name_patterns = ["ESP8266", "NodeMCU", "D1 mini", "Wemos", "CP2102", "CH340"]
+
+[[detection.usb]]
+vid  = "10C4"
+pid  = "EA60"
+chip = "Silicon Labs CP2102"
+
+[[detection.usb]]
+vid  = "1A86"
+pid  = "7523"
+chip = "CH340"
+
+[[detection.usb]]
+vid  = "0403"
+pid  = "6001"
+chip = "FTDI FT232"
+
+[[detection.usb]]
+vid  = "0403"
+pid  = "6015"
+chip = "FTDI FT231X"
+
+[[define]]
+name = "ARDUINO_ESP8266_GENERIC"
+
+[[define]]
+name = "ESP8266"
+
+[[define]]
+name = "ARDUINO_ARCH_ESP8266"

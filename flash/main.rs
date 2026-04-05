@@ -81,6 +81,8 @@ enum Cmd {
     Monitor(MonitorArgs),
     /// Manage Arduino SDK cores via tsuki-modules  (no arduino-cli needed)
     Modules(ModulesArgs),
+    /// Manage downloadable board platforms (install / list / remove / precompile)
+    Platforms(PlatformsArgs),
 }
 
 // ── Compile args ──────────────────────────────────────────────────────────────
@@ -214,6 +216,56 @@ struct MonitorArgs {
     raw: bool,
 }
 
+// ── Platforms args ────────────────────────────────────────────────────────────
+
+#[derive(Args)]
+struct PlatformsArgs {
+    #[command(subcommand)]
+    command: PlatformsCmd,
+}
+
+#[derive(Subcommand)]
+enum PlatformsCmd {
+    /// Download and install a board platform
+    ///
+    /// Examples:
+    ///   tsuki-flash platforms install esp32
+    ///   tsuki-flash platforms install esp8266
+    Install {
+        /// Board ID (e.g. esp32, esp8266, uno)
+        board: String,
+        #[arg(long)]
+        version: Option<String>,
+        /// Registry URL override
+        #[arg(long)]
+        registry: Option<String>,
+        /// Pre-compile the core library after installing (recommended)
+        #[arg(long, default_value_t = true)]
+        precompile: bool,
+        /// Use tsuki-modules SDK store (no .arduino15 required)
+        #[arg(long, default_value_t = false)]
+        use_modules: bool,
+    },
+    /// List installed board platforms
+    List,
+    /// Remove an installed board platform
+    Remove {
+        board: String,
+    },
+    /// Pre-compile the core library for a board (speeds up first build)
+    Precompile {
+        board: String,
+        #[arg(long, default_value_t = false)]
+        use_modules: bool,
+    },
+    /// List boards available in the registry
+    Search {
+        /// Registry URL override
+        #[arg(long)]
+        registry: Option<String>,
+    },
+}
+
 // ── Modules args ──────────────────────────────────────────────────────────────
 
 #[derive(Args)]
@@ -247,6 +299,9 @@ enum ModulesCmd {
 fn main() {
     let cli = Cli::parse();
 
+    // Load installed board platforms into the dynamic board registry.
+    platforms::load_installed_platforms();
+
     // Honour --no-color by setting NO_COLOR before the OnceLock initialises.
     if cli.no_color {
         // SAFETY: single-threaded at this point (no other threads spawned yet).
@@ -262,6 +317,7 @@ fn main() {
         Cmd::SdkInfo { board } => cmd_sdk_info(&board),
         Cmd::Lib(a)            => cmd_lib(a, cli.verbose),
         Cmd::Modules(a)        => cmd_modules(a, cli.verbose),
+        Cmd::Platforms(a)      => cmd_platforms(a, cli.verbose),
         Cmd::Monitor(a)        => cmd_monitor(a, cli.quiet),
     };
 
@@ -543,6 +599,83 @@ fn cmd_modules(args: ModulesArgs, verbose: bool) -> Result<()> {
         ModulesCmd::Install { arch } => cores::install(&arch, verbose),
         ModulesCmd::List             => cores::list(),
         ModulesCmd::Update           => cores::update(verbose),
+    }
+}
+
+fn cmd_platforms(args: PlatformsArgs, verbose: bool) -> Result<()> {
+    match args.command {
+        PlatformsCmd::Install { board, version, registry, precompile, use_modules } => {
+            let registry_url = registry.unwrap_or_else(|| {
+                std::env::var("TSUKI_BOARDS_REGISTRY")
+                    .unwrap_or_else(|_| platforms::DEFAULT_BOARDS_REGISTRY.to_string())
+            });
+            let opts = platforms::InstallOptions {
+                registry_url,
+                verbose,
+                use_modules,
+            };
+            let _toml = platforms::install(&board, version.as_deref(), &opts)?;
+
+            success(&format!("board platform '{}' installed", board));
+
+            if precompile {
+                info(&format!("Pre-compiling core for '{}' (this may take 1-2 min)…", board));
+                // Reload dynamic boards so the newly installed board is findable
+                platforms::load_installed_platforms();
+                match platforms::precompile(&board, use_modules, verbose) {
+                    Ok(())  => success("core pre-compiled — first build will be instant"),
+                    Err(e)  => warn(&format!("pre-compile skipped (SDK not installed?): {}", e)),
+                }
+            }
+            Ok(())
+        }
+
+        PlatformsCmd::List => {
+            let installed = platforms::list_installed();
+            if installed.is_empty() {
+                info("No board platforms installed.");
+                info("Install one: tsuki-flash platforms install esp32");
+                return Ok(());
+            }
+            println!("  {:<20}  {:<10}  {:<10}  {}", "BOARD", "VERSION", "ARCH", "NAME");
+            println!("  {}", "─".repeat(60));
+            for p in &installed {
+                println!("  {:<20}  {:<10}  {:<10}  {}", p.id, p.version, p.arch, p.name);
+            }
+            Ok(())
+        }
+
+        PlatformsCmd::Remove { board } => {
+            platforms::remove(&board)?;
+            success(&format!("board platform '{}' removed", board));
+            Ok(())
+        }
+
+        PlatformsCmd::Precompile { board, use_modules } => {
+            platforms::load_installed_platforms();
+            info(&format!("Pre-compiling core for '{}' (this may take 1-2 min)…", board));
+            platforms::precompile(&board, use_modules, verbose)?;
+            success("core pre-compiled — next build will skip core compilation");
+            Ok(())
+        }
+
+        PlatformsCmd::Search { registry } => {
+            let registry_url = registry.unwrap_or_else(|| {
+                std::env::var("TSUKI_BOARDS_REGISTRY")
+                    .unwrap_or_else(|_| platforms::DEFAULT_BOARDS_REGISTRY.to_string())
+            });
+            let entries = platforms::fetch_registry(&registry_url)?;
+            if entries.is_empty() {
+                info("No boards found in registry.");
+                return Ok(());
+            }
+            println!("  {:<16}  {:<8}  {}", "BOARD", "ARCH", "DESCRIPTION");
+            println!("  {}", "─".repeat(70));
+            for e in &entries {
+                println!("  {:<16}  {:<8}  {}", e.id, e.arch, e.description);
+            }
+            Ok(())
+        }
     }
 }
 

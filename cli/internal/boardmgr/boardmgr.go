@@ -266,16 +266,30 @@ func FindInstalled(id string) *InstalledBoard {
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
-// RegistryIndex mirrors the structure of packages.json but for the "boards" key.
+// RegistryIndex mirrors the tsuki-ex packages.json structure.
+// Supports both the legacy "boards" key and the current "packages" key.
 type RegistryIndex struct {
-	Boards map[string]RegistryBoard `json:"boards"`
-	Branch string                   `json:"branch,omitempty"`
+	Packages map[string]RegistryBoard `json:"packages"` // tsuki-ex format (current)
+	Boards   map[string]RegistryBoard `json:"boards"`   // legacy format (fallback)
+	Branch   string                   `json:"branch,omitempty"`
 }
 
-// RegistryBoard is one entry in the boards registry.
+// allPackages returns a unified map regardless of which key was populated.
+func (r *RegistryIndex) allPackages() map[string]RegistryBoard {
+	if len(r.Packages) > 0 {
+		return r.Packages
+	}
+	return r.Boards
+}
+
+// RegistryBoard is one entry in the board registry.
 type RegistryBoard struct {
+	Type        string            `json:"type"`
+	PlatformID  string            `json:"platform_id"`
 	Description string            `json:"description"`
 	Author      string            `json:"author"`
+	Arch        string            `json:"arch"`
+	Category    string            `json:"category"`
 	Latest      string            `json:"latest"`
 	Versions    map[string]string `json:"versions"` // version → TOML URL
 }
@@ -294,32 +308,39 @@ func fetchRegistry() (*RegistryIndex, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
-	// Board registry lives at the same base URL as the package registry,
-	// but in the "boards" section of boards.json (or the main registry.json).
-	// By convention we expect it at: <registry_base>/boards.json
-	urls := cfg.ResolvedRegistryURLs()
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("no registry URLs configured")
+
+	// BoardsRegistryURL is the dedicated board-support-package registry (tsuki-ex format).
+	// Fall back to deriving from each packages.json URL for backwards compatibility.
+	boardsURL := cfg.Packages.BoardsRegistryURL
+	if boardsURL == "" {
+		boardsURL = config.DefaultBoardsRegistryURL
 	}
 
-	for _, regURL := range urls {
-		// Derive boards.json URL from registry base:
-		// https://raw.githubusercontent.com/.../pkg/packages.json
-		//  → https://raw.githubusercontent.com/.../pkg/boards.json
-		boardsURL := strings.TrimSuffix(regURL, "packages.json") + "boards.json"
+	urls := []string{boardsURL}
 
-		data, err := httpGet(boardsURL)
+	// Also try deriving from any extra registryUrls the user has configured
+	// (legacy behaviour: strip packages.json → boards.json).
+	for _, u := range cfg.ResolvedRegistryURLs() {
+		if derived := strings.TrimSuffix(u, "packages.json") + "boards.json"; derived != u {
+			urls = append(urls, derived)
+		}
+	}
+
+	for _, url := range urls {
+		data, err := httpGet(url)
 		if err != nil {
-			ui.Warn(fmt.Sprintf("board registry unavailable: %s — %v", boardsURL, err))
+			ui.Warn(fmt.Sprintf("board registry unavailable: %s — %v", url, err))
 			continue
 		}
-
 		var idx RegistryIndex
 		if err := json.Unmarshal(data, &idx); err != nil {
-			ui.Warn(fmt.Sprintf("parsing board registry from %s: %v", boardsURL, err))
+			ui.Warn(fmt.Sprintf("parsing board registry from %s: %v", url, err))
 			continue
 		}
-		return &idx, nil
+		if len(idx.allPackages()) > 0 {
+			return &idx, nil
+		}
+		ui.Warn(fmt.Sprintf("board registry empty at %s", url))
 	}
 	return nil, fmt.Errorf("no board registries could be reached")
 }
@@ -333,7 +354,10 @@ func SearchRegistry(query string) ([]RegistryEntry, error) {
 
 	q := strings.ToLower(query)
 	var results []RegistryEntry
-	for id, b := range idx.Boards {
+	for id, b := range idx.allPackages() {
+		if b.Type != "" && b.Type != "board" {
+			continue // skip non-board entries (e.g. platform groups)
+		}
 		if q == "" ||
 			strings.Contains(strings.ToLower(id), q) ||
 			strings.Contains(strings.ToLower(b.Description), q) ||
@@ -358,7 +382,7 @@ func InstallFromRegistry(id, version string) (*InstalledBoard, error) {
 		return nil, err
 	}
 
-	entry, ok := idx.Boards[id]
+	entry, ok := idx.allPackages()[id]
 	if !ok {
 		return nil, fmt.Errorf(
 			"board %q not found in registry — run `tsuki boards search` to see available boards",
@@ -577,5 +601,3 @@ func httpGet(url string) ([]byte, error) {
 	}
 	return io.ReadAll(resp.Body)
 }
-
-

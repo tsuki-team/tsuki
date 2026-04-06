@@ -14,7 +14,7 @@ use tsuki_ux::{info, warn, LiveBlock};
 // ─── Registry URL ─────────────────────────────────────────────────────────────
 
 pub const DEFAULT_BOARDS_REGISTRY: &str =
-    "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/boards/boards.json";
+    "https://raw.githubusercontent.com/tsuki-team/tsuki-ex/refs/heads/main/pkg/packages.json";
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
 
@@ -271,6 +271,13 @@ pub fn parse_board_toml(raw: &str) -> Option<Board> {
 
 // ─── Registry fetch ───────────────────────────────────────────────────────────
 
+/// Whether a registry entry is a board platform or a tsukilib library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistryKind {
+    Board,
+    Lib,
+}
+
 #[derive(Debug)]
 pub struct RegistryEntry {
     pub id:          String,
@@ -280,6 +287,8 @@ pub struct RegistryEntry {
     pub category:    String,
     pub latest:      String,
     pub toml_url:    String,
+    /// Parsed from the `"type"` field: `"board"` → `Board`, `"lib"` → `Lib`.
+    pub kind:        RegistryKind,
 }
 
 /// Fetch and parse boards.json from the given registry URL.
@@ -323,15 +332,26 @@ fn cache_path_for(url: &str) -> PathBuf {
 }
 
 fn parse_boards_json(data: &str) -> Result<Vec<RegistryEntry>> {
-    let mut entries = Vec::new();
+    // Support both legacy "boards" key and the current tsuki-ex "packages" key.
+    let section_key = if data.contains("\"packages\"") {
+        "\"packages\""
+    } else if data.contains("\"boards\"") {
+        "\"boards\""
+    } else {
+        return Err(FlashError::Other("invalid registry: no \"packages\" or \"boards\" key".into()));
+    };
+
+    let skip_key = if section_key == "\"packages\"" { "packages" } else { "boards" };
+
     let boards_start = data
-        .find("\"boards\"")
-        .ok_or_else(|| FlashError::Other("invalid boards.json".into()))?;
+        .find(section_key)
+        .ok_or_else(|| FlashError::Other("invalid registry json".into()))?;
     let brace_open = data[boards_start..]
         .find('{')
         .map(|i| boards_start + i)
-        .ok_or_else(|| FlashError::Other("invalid boards.json".into()))?;
+        .ok_or_else(|| FlashError::Other("invalid registry json".into()))?;
 
+    let mut entries = Vec::new();
     let inner = &data[brace_open + 1..];
     let mut pos = 0;
     while pos < inner.len() {
@@ -342,7 +362,7 @@ fn parse_boards_json(data: &str) -> Result<Vec<RegistryEntry>> {
             .map(|i| qs + 1 + i)
             .unwrap_or(inner.len());
         let key = &inner[qs + 1..qe];
-        if key == "boards" {
+        if key == skip_key {
             pos = qe + 1;
             continue;
         }
@@ -376,25 +396,18 @@ fn parse_boards_json(data: &str) -> Result<Vec<RegistryEntry>> {
         let arch        = extract_json_str(obj_str, "arch").unwrap_or_default();
         let category    = extract_json_str(obj_str, "category").unwrap_or_default();
         let latest      = extract_json_str(obj_str, "latest").unwrap_or_default();
+        let kind = match extract_json_str(obj_str, "type").as_deref() {
+            Some("lib") => RegistryKind::Lib,
+            _           => RegistryKind::Board,
+        };
 
+        // ── Bug fix: the old code searched obj_str for the version string
+        // (e.g. `"1.0.0"`) and found it inside `"latest":"1.0.0"` before
+        // reaching the `"versions":{...}` sub-object.  After the ':' it saw
+        // `{`, not a quoted string, and returned toml_url = "".
+        // Fix: locate the "versions" sub-object first, then search inside it.
         let toml_url = if !latest.is_empty() {
-            let ver_key = format!("\"{}\"", latest);
-            if let Some(vi) = obj_str.find(&ver_key) {
-                let after = &obj_str[vi + ver_key.len()..];
-                if let Some(col) = after.find(':') {
-                    let trimmed = after[col + 1..].trim();
-                    if trimmed.starts_with('"') {
-                        let inner_str = &trimmed[1..];
-                        inner_str[..inner_str.find('"').unwrap_or(inner_str.len())].to_string()
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
+            extract_versioned_url(obj_str, &latest)
         } else {
             String::new()
         };
@@ -408,11 +421,52 @@ fn parse_boards_json(data: &str) -> Result<Vec<RegistryEntry>> {
                 category,
                 latest,
                 toml_url,
+                kind,
             });
         }
         pos = obj_end + 1;
     }
     Ok(entries)
+}
+
+/// Extract the URL for a specific version from a package's `"versions":{...}` sub-object.
+///
+/// This avoids the bug where searching for `"1.0.0"` in the full object string finds
+/// the value of `"latest":"1.0.0"` before the `"versions"` map.
+fn extract_versioned_url(obj_str: &str, version: &str) -> String {
+    // 1. Find "versions" key
+    let versions_key = "\"versions\"";
+    let Some(vi) = obj_str.find(versions_key) else { return String::new() };
+    let after_key = &obj_str[vi + versions_key.len()..];
+
+    // 2. Find the opening brace of the versions object
+    let Some(brace_off) = after_key.find('{') else { return String::new() };
+    let versions_body = &after_key[brace_off..];
+
+    // 3. Walk to the matching closing brace
+    let mut depth = 0usize;
+    let mut body_end = versions_body.len();
+    for (i, c) in versions_body.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 { body_end = i + 1; break; }
+            }
+            _ => {}
+        }
+    }
+    let versions_obj = &versions_body[..body_end];
+
+    // 4. Now search for the version key *inside* versions_obj only
+    let ver_key = format!("\"{}\"", version);
+    let Some(ki) = versions_obj.find(&ver_key) else { return String::new() };
+    let after = &versions_obj[ki + ver_key.len()..];
+    let Some(col) = after.find(':') else { return String::new() };
+    let trimmed = after[col + 1..].trim_start();
+    if !trimmed.starts_with('"') { return String::new(); }
+    let inner = &trimmed[1..];
+    inner[..inner.find('"').unwrap_or(inner.len())].to_string()
 }
 
 fn extract_json_str(s: &str, key: &str) -> Option<String> {
@@ -479,6 +533,13 @@ pub fn install(board_id: &str, version_hint: Option<&str>, opts: &InstallOptions
         .ok_or_else(|| {
             FlashError::Other(format!("board '{}' not found in registry", board_id))
         })?;
+
+    if entry.kind == RegistryKind::Lib {
+        return Err(FlashError::Other(format!(
+            "'{}' is a library package — use `tsuki pkg install` instead",
+            board_id
+        )));
+    }
 
     let version = version_hint.unwrap_or(&entry.latest);
     block.line(&format!("found {} v{}", entry.id, version));

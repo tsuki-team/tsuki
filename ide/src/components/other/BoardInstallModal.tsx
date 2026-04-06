@@ -194,6 +194,7 @@ export default function BoardInstallModal({
 }) {
   const store    = useStore()
   const settings = store.settings
+  const addLog   = store.addLog
 
   const [tab,         setTab]         = useState<Tab>('readme')
   const [phase,       setPhase]       = useState<Phase>('preview')
@@ -248,9 +249,11 @@ export default function BoardInstallModal({
       : 'tsuki-flash'
 
     const registryUrl =
-      (settings.registryUrls ?? [])[0] ||
-      settings.registryUrl ||
-      'https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json'
+      settings.boardsRegistryUrl ||
+      'https://raw.githubusercontent.com/tsuki-team/tsuki-ex/refs/heads/main/pkg/packages.json'
+
+    addLog('info', `[install:board] ── Installing board package: ${platform.id} v${platform.version} ──`)
+    addLog('info', `[install:board] cmd: ${flashBin} platforms install ${platform.id} --registry ${registryUrl}`)
 
     try {
       const { spawnProcess } = await import('@/lib/tauri')
@@ -265,11 +268,20 @@ export default function BoardInstallModal({
         (line: string) => {
           logsRef.current.push(line)
 
+          // Forward every line to the developer log
+          const trimmed = line.trim()
+          if (trimmed) {
+            const isErr  = /error|fail/i.test(trimmed)
+            const isWarn = /warn/i.test(trimmed)
+            addLog(isErr ? 'err' : isWarn ? 'warn' : 'info', `[install:board] ${trimmed}`)
+          }
+
           // Map line to step
           const stepped = classifyLine(line)
           if (stepped && stepped !== currentStep) {
             setStep(currentStep, 'done')
             currentStep = stepped
+            addLog('info', `[install:board] ↳ step: ${stepped}`)
             setStep(currentStep, 'running', line.trim())
           } else if (stepped === currentStep) {
             setStep(currentStep, 'running', line.trim())
@@ -280,7 +292,10 @@ export default function BoardInstallModal({
       const code = await handle.done
       handle.dispose()
 
-      if (code !== 0) throw new Error(`tsuki-flash exited with code ${code}`)
+      if (code !== 0) {
+        addLog('err', `[install:board] tsuki-flash exited with code ${code}`)
+        throw new Error(`tsuki-flash exited with code ${code}`)
+      }
 
       // Mark remaining steps done
       setSteps(prev => prev.map(s =>
@@ -288,12 +303,14 @@ export default function BoardInstallModal({
           ? { ...s, status: 'done' }
           : s
       ))
+      addLog('ok', `[install:board] ✓ ${platform.id} installed successfully`)
       setPhase('done')
       setOfferSwitch(true)
       onInstalled({ ...platform, installed: true })
 
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
+      addLog('err', `[install:board] ✗ Installation failed: ${msg}`)
       setErrorMsg(msg)
       setSteps(prev => prev.map(s =>
         s.status === 'running' ? { ...s, status: 'error', detail: msg } : s

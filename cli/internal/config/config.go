@@ -19,8 +19,9 @@ import (
 	"strings"
 )
 
-const defaultRegistryURL = "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json"
-const defaultKeysIndexURL = "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/keys/index.json"
+const defaultRegistryURL = "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json"
+const defaultKeysIndexURL = "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/keys/index.json"
+const defaultBoardsRegistryURL = "https://raw.githubusercontent.com/tsuki-team/tsuki-ex/refs/heads/main/pkg/packages.json"
 
 // PackagesConfig groups all package-management settings.
 // Stored under the "packages" key in config.json.
@@ -38,6 +39,10 @@ type PackagesConfig struct {
 	// RegistryURLs is the list of registry JSON URLs to consult, in priority
 	// order (first registry wins on name collisions).
 	RegistryURLs []string `json:"registry_urls" comment:"ordered list of package registry URLs"`
+
+	// BoardsRegistryURL is the URL of the board-support-package registry.
+	// Defaults to tsuki-ex (tsuki-team/tsuki-ex).
+	BoardsRegistryURL string `json:"boards_registry_url,omitempty" comment:"URL of the board support package registry (tsuki-ex format)"`
 
 	// KeysDir is where downloaded public signing keys are cached.
 	KeysDir string `json:"keys_dir" comment:"directory where package signing keys are cached (leave empty for default)"`
@@ -83,13 +88,14 @@ func Default() *Config {
 		Verbose:      false,
 		AutoDetect:   true,
 		Packages: PackagesConfig{
-			LibsDir:          "",
-			BoardsDir:        "",
-			RegistryURL:      "",
-			RegistryURLs:     []string{},
-			KeysDir:          "",
-			KeysIndexURL:     defaultKeysIndexURL,
-			VerifySignatures: false,
+			LibsDir:           "",
+			BoardsDir:         "",
+			RegistryURL:       "",
+			RegistryURLs:      []string{defaultRegistryURL},
+			BoardsRegistryURL: defaultBoardsRegistryURL,
+			KeysDir:           "",
+			KeysIndexURL:      defaultKeysIndexURL,
+			VerifySignatures:  false,
 		},
 	}
 }

@@ -1,62 +1,254 @@
 {
-  "boards_registry": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/boards.json",
   "packages": {
     "bmp280": {
+      "type": "lib",
       "description": "BMP280/BME280 barometric pressure and temperature sensor (Adafruit BMP280)",
       "author": "tsuki-team",
+      "arduino_lib": "Adafruit BMP280 Library",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/bmp280/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/bmp280/v1.0.0/godotinolib.toml"
       }
     },
     "dht": {
+      "type": "lib",
       "description": "DHT11/DHT22 temperature and humidity sensor",
       "author": "tsuki-team",
+      "arduino_lib": "DHT sensor library",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/dht/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/dht/v1.0.0/godotinolib.toml"
+      }
+    },
+    "due": {
+      "type": "board",
+      "description": "due package",
+      "author": "tsuki-team",
+      "arch": "sam",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/due/v1.0.0/board.toml"
+      }
+    },
+    "esp32": {
+      "type": "board",
+      "description": "esp32 package",
+      "author": "tsuki-team",
+      "arch": "esp32",
+      "category": "wifi",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/esp32/v1.0.0/board.toml"
+      }
+    },
+    "esp32c3": {
+      "type": "board",
+      "description": "esp32c3 package",
+      "author": "tsuki-team",
+      "arch": "esp32",
+      "category": "wifi",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/esp32c3/v1.0.0/board.toml"
+      }
+    },
+    "esp32s2": {
+      "type": "board",
+      "description": "esp32s2 package",
+      "author": "tsuki-team",
+      "arch": "esp32",
+      "category": "wifi",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/esp32s2/v1.0.0/board.toml"
+      }
+    },
+    "esp8266": {
+      "type": "board",
+      "description": "esp8266 package",
+      "author": "tsuki-team",
+      "arch": "esp8266",
+      "category": "wifi",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/esp8266/v1.0.0/board.toml"
       }
     },
     "irremote": {
+      "type": "lib",
       "description": "IR remote send and receive (IRremote library v4)",
       "author": "tsuki-team",
+      "arduino_lib": "IRremote",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/irremote/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/irremote/v1.0.0/godotinolib.toml"
+      }
+    },
+    "leonardo": {
+      "type": "board",
+      "description": "leonardo package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/leonardo/v1.0.0/board.toml"
+      }
+    },
+    "lolin_d1_mini": {
+      "type": "board",
+      "description": "lolin_d1_mini package",
+      "author": "tsuki-team",
+      "arch": "esp8266",
+      "category": "wifi",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/lolin_d1_mini/v1.0.0/board.toml"
+      }
+    },
+    "mega": {
+      "type": "board",
+      "description": "mega package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/mega/v1.0.0/board.toml"
+      }
+    },
+    "micro": {
+      "type": "board",
+      "description": "micro package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/micro/v1.0.0/board.toml"
       }
     },
     "mpu6050": {
+      "type": "lib",
       "description": "MPU-6050 6-axis accelerometer and gyroscope (Adafruit MPU6050)",
       "author": "tsuki-team",
+      "arduino_lib": "Adafruit MPU6050",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/mpu6050/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/mpu6050/v1.0.0/godotinolib.toml"
+      }
+    },
+    "nano": {
+      "type": "board",
+      "description": "nano package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/nano/v1.0.0/board.toml"
+      }
+    },
+    "nano_old": {
+      "type": "board",
+      "description": "nano_old package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/nano_old/v1.0.0/board.toml"
+      }
+    },
+    "nodemcu": {
+      "type": "board",
+      "description": "nodemcu package",
+      "author": "tsuki-team",
+      "arch": "esp8266",
+      "category": "wifi",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/nodemcu/v1.0.0/board.toml"
+      }
+    },
+    "pro_mini_3v3": {
+      "type": "board",
+      "description": "pro_mini_3v3 package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/pro_mini_3v3/v1.0.0/board.toml"
+      }
+    },
+    "pro_mini_5v": {
+      "type": "board",
+      "description": "pro_mini_5v package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/pro_mini_5v/v1.0.0/board.toml"
       }
     },
     "stepper": {
+      "type": "lib",
       "description": "AccelStepper — stepper motor driver with acceleration and speed control",
       "author": "tsuki-team",
+      "arduino_lib": "AccelStepper",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/stepper/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/stepper/v1.0.0/godotinolib.toml"
       }
     },
     "u8g2": {
+      "type": "lib",
       "description": "U8g2 monochrome display library (OLED, LCD)",
       "author": "tsuki-team",
+      "arduino_lib": "U8g2",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/u8g2/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/u8g2/v1.0.0/godotinolib.toml"
+      }
+    },
+    "uno": {
+      "type": "board",
+      "description": "uno package",
+      "author": "tsuki-team",
+      "arch": "avr",
+      "category": "basic",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/uno/v1.0.0/board.toml"
       }
     },
     "ws2812": {
+      "type": "lib",
       "description": "WS2812 / NeoPixel RGB LED driver (Adafruit NeoPixel)",
       "author": "tsuki-team",
+      "arduino_lib": "Adafruit NeoPixel",
+      "arch": "",
+      "category": "sensor",
       "latest": "1.0.0",
       "versions": {
-        "1.0.0": "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/v6.0-WEBPAGE-AND-FIXES/pkg/ws2812/v1.0.0/godotinolib.toml"
+        "1.0.0": "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/ws2812/v1.0.0/godotinolib.toml"
       }
     }
   },
-  "branch": "v6.0-WEBPAGE-AND-FIXES"
+  "branch": "main"
 }

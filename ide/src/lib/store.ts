@@ -137,6 +137,7 @@ export interface SettingsState {
   extraLibsDirs: string[]   // additional package search paths (merged with libsDir)
   registryUrl: string
   registryUrls: string[]   // additional registry sources (merged with registryUrl)
+  boardsRegistryUrl: string  // board-support-package registry (tsuki-ex format)
   verifySignatures: boolean
   installedBoardPkgs: string[]   // board package IDs that have been installed + precompiled
   // -- Updates
@@ -445,8 +446,9 @@ const DEFAULT_SETTINGS: SettingsState = {
   color: true,
   libsDir: '~/.tsuki/libs',
   extraLibsDirs: [],
-  registryUrl: 'https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json',
+  registryUrl: 'https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json',
   registryUrls: [],
+  boardsRegistryUrl: 'https://raw.githubusercontent.com/tsuki-team/tsuki-ex/refs/heads/main/pkg/packages.json',
   verifySignatures: true,
   installedBoardPkgs: [],
   updateChannel: 'stable',

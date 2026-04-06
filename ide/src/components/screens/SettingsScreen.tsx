@@ -84,7 +84,8 @@ function SectionHeader({ title, desc }: { title: string; desc: string }) {
 // Data lives in settings.registryUrls (string[]). The legacy settings.registryUrl
 // field is still preserved for backward compat but not shown in this UI.
 
-const BUILTIN_REGISTRY = 'https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json'
+const BUILTIN_REGISTRY = 'https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json'
+const BUILTIN_BOARDS_REGISTRY = 'https://raw.githubusercontent.com/tsuki-team/tsuki-ex/refs/heads/main/pkg/packages.json'
 
 function RegistrySourcesEditor() {
   const { settings, updateSetting } = useStore()
@@ -245,6 +246,73 @@ function RegistrySourcesEditor() {
               className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--fg-faint)] hover:text-[var(--err)] hover:bg-[color-mix(in_srgb,var(--err)_10%,transparent)] border-0 bg-transparent cursor-pointer transition-colors"
             >
               <Trash2 size={10} /> Clear all custom registries
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── BoardsRegistryEditor ──────────────────────────────────────────────────────
+// Lets the user override the board-support-package registry URL (tsuki-ex format).
+
+function BoardsRegistryEditor() {
+  const { settings, updateSetting } = useStore()
+  const [editing, setEditing] = React.useState(false)
+  const [draft, setDraft] = React.useState('')
+
+  const current: string = (settings as any).boardsRegistryUrl || BUILTIN_BOARDS_REGISTRY
+  const isDefault = current === BUILTIN_BOARDS_REGISTRY
+
+  function startEdit() {
+    setDraft(current)
+    setEditing(true)
+  }
+
+  function save() {
+    const url = draft.trim()
+    if (url) updateSetting('boardsRegistryUrl' as any, url)
+    setEditing(false)
+  }
+
+  function reset() {
+    updateSetting('boardsRegistryUrl' as any, BUILTIN_BOARDS_REGISTRY)
+    setEditing(false)
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {editing ? (
+        <div className="flex items-center gap-2">
+          <input
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
+            className="flex-1 font-mono text-xs bg-[var(--surface)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none text-[var(--fg)] placeholder-[var(--fg-faint)] focus:border-[var(--fg-faint)]"
+          />
+          <button onClick={save} className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-[var(--surface-3)] hover:bg-[var(--hover)] text-[var(--fg)] border border-[var(--border)] cursor-pointer transition-colors">
+            Save
+          </button>
+          <button onClick={() => setEditing(false)} className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--hover)] border-0 bg-transparent cursor-pointer transition-colors">
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface-1)]">
+          {isDefault && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-mono font-semibold shrink-0">
+              default
+            </span>
+          )}
+          <span className="flex-1 font-mono text-xs text-[var(--fg)] truncate min-w-0" title={current}>{current}</span>
+          <button onClick={startEdit} className="text-[10px] text-[var(--fg-faint)] hover:text-[var(--fg)] border-0 bg-transparent cursor-pointer transition-colors px-1">
+            Edit
+          </button>
+          {!isDefault && (
+            <button onClick={reset} className="text-[10px] text-[var(--fg-faint)] hover:text-[var(--err)] border-0 bg-transparent cursor-pointer transition-colors px-1">
+              Reset
             </button>
           )}
         </div>
@@ -1538,19 +1606,96 @@ function DefaultsTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Board package definitions — imported from shared lib
+//  Dynamic board/lib package registry
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BOARD_PACKAGES, BoardPkg } from '@/lib/boardPackages'
+import { fetchBoardRegistry, type RegistryBoard } from '@/lib/boardPackages'
+import BoardInstallModal from '@/components/other/BoardInstallModal'
+import type { BoardPlatform } from '@/lib/store'
 
-// Icon resolver (mirrors PlatformsSidebar)
-function PkgIcon({ name, size = 16 }: { name: BoardPkg['iconName']; size?: number }) {
-  switch (name) {
-    case 'CircuitBoard': return <CircuitBoard size={size} />
-    case 'Wifi':         return <Wifi         size={size} />
-    case 'Cpu':          return <CpuIcon      size={size} />
-    case 'Box':          return <Box          size={size} />
-  }
+// Map arch/icon strings to lucide icons
+function PkgIcon({ arch, type: pkgType, size = 16 }: { arch?: string; type?: string; size?: number }) {
+  if (pkgType === 'lib') return <Package size={size} />
+  if (arch?.startsWith('esp')) return <Wifi size={size} />
+  if (arch === 'rp2040') return <CpuIcon size={size} />
+  return <CircuitBoard size={size} />
+}
+
+// ── Dynamic card for a single board or lib entry ──────────────────────────────
+
+function PkgCard({
+  id,
+  entry,
+  installed,
+  onInstall,
+  onRemove,
+}: {
+  id:        string
+  entry:     RegistryBoard
+  installed: boolean
+  onInstall: () => void
+  onRemove:  () => void
+}) {
+  const isLib = entry.type === 'lib'
+
+  return (
+    <div className={clsx(
+      'rounded-lg border transition-colors',
+      installed
+        ? 'border-[var(--fg-faint)] bg-[var(--surface-1)]'
+        : 'border-[var(--border)] bg-[var(--surface-1)]',
+    )}>
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className={clsx(
+          'flex-shrink-0 transition-colors',
+          installed ? 'text-[var(--fg-muted)]' : 'text-[var(--fg-faint)]',
+        )}>
+          <PkgIcon arch={entry.arch} type={entry.type} size={16} />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+            <span className="text-sm font-medium text-[var(--fg)] font-mono">{id}</span>
+            <span className="text-[9px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">
+              v{entry.latest}
+            </span>
+            {/* type badge */}
+            <span className={clsx(
+              'text-[9px] font-mono px-1.5 py-0.5 rounded border',
+              isLib
+                ? 'text-[var(--info)] border-[color-mix(in_srgb,var(--info)_25%,transparent)] bg-[color-mix(in_srgb,var(--info)_8%,transparent)]'
+                : 'text-[var(--fg-faint)] border-[var(--border)] bg-[var(--surface-3)]',
+            )}>
+              {isLib ? 'lib' : 'board'}
+            </span>
+            {installed && (
+              <span className="text-[9px] font-mono text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)] px-1.5 py-0.5 rounded">
+                installed
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-[var(--fg-muted)] leading-relaxed line-clamp-1">
+            {entry.description}
+          </p>
+          <p className="text-[10px] text-[var(--fg-faint)] mt-0.5 font-mono">
+            {entry.author} · {entry.arch || entry.platform_id || '—'}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {installed ? (
+            <Btn variant="danger" size="xs" onClick={onRemove} className="gap-1">
+              <Trash2 size={10} /> Remove
+            </Btn>
+          ) : (
+            <Btn variant="outline" size="xs" onClick={onInstall} className="gap-1">
+              <Download size={10} /> Install
+            </Btn>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2085,6 +2230,17 @@ function PackagesTab() {
         Custom registries override the built-in one for packages with the same name.
       </p>
       <RegistrySourcesEditor />
+
+      {/* ── Board support registry ── */}
+      <GroupHeader title="Board Support Registry" />
+      <p className="text-xs text-[var(--fg-muted)] mb-3 leading-relaxed">
+        URL of the board-support-package registry (tsuki-ex format). Used when installing
+        board platforms from the Platforms sidebar. Must point to a{' '}
+        <code className="font-mono bg-[var(--surface-3)] px-1 rounded">packages.json</code> with{' '}
+        <code className="font-mono bg-[var(--surface-3)] px-1 rounded">"platforms"</code> and{' '}
+        <code className="font-mono bg-[var(--surface-3)] px-1 rounded">"packages"</code> keys.
+      </p>
+      <BoardsRegistryEditor />
 
       {/* Install modal */}
       {installTarget && (
@@ -3250,6 +3406,7 @@ function VersionHistoryPanel({
 const DEFAULT_CATS = {
   spawn: true, pty: true, resolve: true,
   settings: true, shell: true, process: true, frontend: true,
+  install: true,
 }
 
 const LOG_CATEGORIES: { key: string; desc: string; examples: string }[] = [
@@ -3287,6 +3444,11 @@ const LOG_CATEGORIES: { key: string; desc: string; examples: string }[] = [
     key: 'frontend',
     desc: 'console.log/warn/error forwarded from the renderer',
     examples: '[frontend:log] [frontend:warn] [frontend:error]',
+  },
+  {
+    key: 'install',
+    desc: 'Board & library package installations — every stdout line + exit codes',
+    examples: '[install:board] [install:lib] step: toolchain ✓',
   },
 ]
 
@@ -3637,6 +3799,7 @@ function DeveloperTab() {
                 const isErr   = /\[frontend:error]|\[lvl=error]/.test(line)
                 const isWarn  = /\[frontend:warn]|\[lvl=warn]/.test(line)
                 const isSpawn = /\[spawn_process]|\[cat=spawn|\[cat=pty|\[cat=resolve/.test(line)
+                const isInstall = /\[install:/.test(line)
                 const isSystem = /\[system:|\[cat=main]|log-cleared/.test(line)
                 return (
                   <span key={i} className={

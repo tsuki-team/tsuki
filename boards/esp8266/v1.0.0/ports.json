@@ -1,9 +1,0 @@
-{
-  "usb": [
-    { "vid": "10C4", "pid": "EA60", "name": "Silicon Labs CP2102" },
-    { "vid": "1A86", "pid": "7523", "name": "CH340"               },
-    { "vid": "0403", "pid": "6001", "name": "FTDI FT232RL"        },
-    { "vid": "0403", "pid": "6015", "name": "FTDI FT231X"         }
-  ],
-  "name_patterns": ["ESP8266", "NodeMCU", "D1 mini", "Wemos", "CP2102", "CH340"]
-}

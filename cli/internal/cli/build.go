@@ -402,10 +402,11 @@ func compileTsukiFlash(
 	}
 
 	// Build the --include list from installed tsuki packages.
-	// Arduino libraries follow a standard layout:
-	//   libsDir/<PkgName>/<version>/         ← versioned root (added)
-	//   libsDir/<PkgName>/<version>/src/     ← headers live here (also added)
-	// We add both so that both DHT.h (root) and src/DHT.h variants work.
+	// Each tsukilib package has two relevant paths:
+	//   1. libsDir/<PkgName>/<version>/  — contains tsukilib.toml (tsuki pkg store)
+	//   2. ~/.arduino15/libraries/<arduino_lib>/  — contains the actual C++ headers
+	//      installed by `tsuki-flash lib install` or `arduino-cli lib install`
+	// We add both so the compiler can find DHT.h, Wire.h, etc.
 	var includeArgs []string
 	for _, pkg := range pkgNames {
 		pkgDir := filepath.Join(libsDir, pkg)
@@ -419,6 +420,11 @@ func compileTsukiFlash(
 					srcDir := filepath.Join(versionedDir, "src")
 					if info, statErr := os.Stat(srcDir); statErr == nil && info.IsDir() {
 						includeArgs = append(includeArgs, srcDir)
+					}
+					// Also add the actual Arduino C++ library path (where DHT.h etc. live).
+					arduinoLib := readArduinoLibName(filepath.Join(versionedDir, "tsukilib.toml"))
+					if arduinoLib != "" {
+						addArduinoLibIncludes(arduinoLib, &includeArgs)
 					}
 					break
 				}
@@ -452,6 +458,28 @@ func compileTsukiFlash(
 
 	lang := m.EffectiveLanguage()
 
+	// ── Parse tsuki annotations from source files ──────────────────────────────
+	// Collect all source files to scan for #[flags(...)] and #[modules(...)]
+	var annotationSrcFiles []string
+	for _, f := range result.CppFiles {
+		// Scan the original source (not the generated .cpp) where possible.
+		// CppFiles are already the generated outputs; the originals live in src/.
+		// We scan the sketch dir anyway since transpiled files may embed them.
+		annotationSrcFiles = append(annotationSrcFiles, f)
+	}
+	// Also scan the project's raw source files (pre-transpile)
+	srcDir := filepath.Join(filepath.Dir(result.SketchDir), "..")
+	for _, ext := range []string{"*.go", "*.py"} {
+		if matches, _ := filepath.Glob(filepath.Join(srcDir, "src", ext)); len(matches) > 0 {
+			annotationSrcFiles = append(annotationSrcFiles, matches...)
+		}
+	}
+	ann := ParseAnnotations(annotationSrcFiles)
+	if ann.Flags != "" || ann.Modules != "" {
+		ui.Step("annotations",
+			fmt.Sprintf("TSUKI_FLAGS=%q  TSUKI_MODULES=%q", ann.Flags, ann.Modules))
+	}
+
 	args := []string{
 		"compile",
 		"--board", board,
@@ -475,6 +503,13 @@ func compileTsukiFlash(
 	}
 
 	cmd := exec.Command(flashBin, args...)
+
+	// Pass annotation env vars to tsuki-flash so it can forward them to the
+	// firmware build (e.g. sets -D flags or Rust cargo features).
+	cmd.Env = append(os.Environ(),
+		"TSUKI_FLAGS="+ann.Flags,
+		"TSUKI_MODULES="+ann.Modules,
+	)
 
 	// Use LiveBlock for real-time streaming output with Docker-style collapse.
 	// tsuki-flash writes progress lines to stderr and the final error to stderr,
@@ -784,6 +819,43 @@ func renderArduinoError(output string) {
 		errMsg = "compilation failed"
 	}
 	ui.Traceback("CompileError", errMsg, frames)
+}
+
+// readArduinoLibName extracts the arduino_lib field from a tsukilib.toml file.
+func readArduinoLibName(tomlPath string) string {
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "arduino_lib") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				return strings.Trim(strings.TrimSpace(parts[1]), `"`)
+			}
+		}
+	}
+	return ""
+}
+
+// addArduinoLibIncludes appends the arduino15 library path (and its src/ subdir)
+// to includeArgs if they exist. Arduino libraries are installed by tsuki-flash
+// or arduino-cli to ~/.arduino15/libraries/<LibraryName>/.
+func addArduinoLibIncludes(arduinoLib string, includeArgs *[]string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	libDir := filepath.Join(home, ".arduino15", "libraries", arduinoLib)
+	if info, err := os.Stat(libDir); err != nil || !info.IsDir() {
+		return
+	}
+	*includeArgs = append(*includeArgs, libDir)
+	srcDir := filepath.Join(libDir, "src")
+	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+		*includeArgs = append(*includeArgs, srcDir)
+	}
 }
 
 func boardFQBN(id string) (string, error) {

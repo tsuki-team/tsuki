@@ -219,6 +219,32 @@ pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<Compil
         for d in board.defines {
             f.push(format!("-D{}", d));
         }
+
+        // ── tsuki annotations: TSUKI_FLAGS env var ────────────────────────────
+        // TSUKI_FLAGS is set by the tsuki CLI after parsing // #[flags(...)] in
+        // user source.  Format: "KEY=VAL,KEY2=VAL2" — each pair becomes a -D flag.
+        if let Ok(raw) = std::env::var("TSUKI_FLAGS") {
+            for pair in raw.split(',') {
+                let pair = pair.trim();
+                if !pair.is_empty() {
+                    f.push(format!("-DTSUKI_FLAG_{}", pair.replace('-', "_")));
+                }
+            }
+        }
+
+        // ── tsuki annotations: TSUKI_MODULES env var ─────────────────────────
+        // TSUKI_MODULES is set by the tsuki CLI after parsing // #[modules(...)]
+        // in user source.  Each active module becomes a -DTSUKI_MODULE_<NAME>=1
+        // so user C++ can guard code with #ifdef TSUKI_MODULE_WIFI etc.
+        if let Ok(raw) = std::env::var("TSUKI_MODULES") {
+            for module in raw.split(',') {
+                let module = module.trim().to_uppercase().replace('-', "_");
+                if !module.is_empty() {
+                    f.push(format!("-DTSUKI_MODULE_{}=1", module));
+                }
+            }
+        }
+
         for extra in &req.lib_include_dirs {
             f.push(format!("-I{}", extra.display()));
         }
@@ -327,6 +353,71 @@ pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<Compil
     let sketch_obj_dir = req.build_dir.join(format!("sketch-{}", arch_tag));
     std::fs::create_dir_all(&sketch_obj_dir)?;
 
+    // ── Precompiled Header (PCH) for Arduino.h ────────────────────────────
+    // Arduino.h on ESP32/ESP8266 transitively pulls in hundreds of SDK/IDF
+    // headers.  Without a PCH every source file re-parses all of them —
+    // typically 1-5s per file.  With a valid PCH GCC loads the pre-parsed
+    // binary representation in milliseconds.
+    //
+    // Strategy:
+    //  1. Copy Arduino.h from the SDK core into pch_dir/ so GCC finds it
+    //     there first when searching include paths.
+    //  2. Compile pch_dir/Arduino.h → pch_dir/Arduino.h.gch with the exact
+    //     same flags used for sketch compilation (GCC validates this).
+    //  3. Prepend -I{pch_dir} to every C++ sketch/lib compilation.
+    //
+    // Cache key: SHA-256 of (common_flags + cxxflags).  Rebuilt only when
+    // flags change (new lib added, SDK upgrade, etc.).  Failure is silent —
+    // the build continues using normal header parsing.
+    let pch_dir      = sketch_obj_dir.join("pch");
+    let pch_copy     = pch_dir.join("Arduino.h");
+    let pch_gch      = pch_dir.join("Arduino.h.gch");
+    let pch_sentinel = pch_dir.join(".pch_sig");
+    let pch_sig      = hash_str(&format!("{:?}{:?}", common_flags, cxxflags));
+
+    let pch_valid = pch_gch.exists()
+        && std::fs::read_to_string(&pch_sentinel)
+            .map(|s| s.trim() == pch_sig.as_str())
+            .unwrap_or(false);
+
+    if !pch_valid {
+        let sdk_arduino_h = sdk.core_dir.join("Arduino.h");
+        if sdk_arduino_h.is_file()
+            && std::fs::create_dir_all(&pch_dir).is_ok()
+            && std::fs::copy(&sdk_arduino_h, &pch_copy).is_ok()
+        {
+            if req.verbose { eprintln!("  [pch] compiling Arduino.h precompiled header…"); }
+            let mut pch_cmd = Command::new(&cxx);
+            pch_cmd.arg(format!("-I{}", pch_dir.display())); // pch_dir searched first
+            pch_cmd.args(&common_flags);
+            pch_cmd.args(&cxxflags);
+            pch_cmd.args(["-x", "c++-header", "-c"]);
+            pch_cmd.arg(&pch_copy).arg("-o").arg(&pch_gch);
+            match pch_cmd.output() {
+                Ok(o) if o.status.success() => {
+                    let _ = std::fs::write(&pch_sentinel, &pch_sig);
+                }
+                Ok(o) => {
+                    // Non-fatal: fall back to normal header parsing
+                    let _ = std::fs::remove_file(&pch_gch);
+                    if req.verbose {
+                        let msg = String::from_utf8_lossy(&o.stderr);
+                        eprintln!("  [pch warn] PCH build failed, using header parsing: {}",
+                            msg.lines().next().unwrap_or("unknown error"));
+                    }
+                }
+                Err(_) => { let _ = std::fs::remove_file(&pch_gch); }
+            }
+        }
+    }
+
+    // Prepend -I{pch_dir} only when the PCH was successfully built.
+    let pch_include: Option<String> = if pch_gch.exists() {
+        Some(format!("-I{}", pch_dir.display()))
+    } else {
+        None
+    };
+
     let sources = collect_sources(&req.sketch_dir)?;
     if sources.is_empty() {
         return Err(FlashError::Other("No source files found".into()));
@@ -346,6 +437,11 @@ pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<Compil
         let compiler = if is_c { &cc } else { &cxx };
 
         let mut cmd = Command::new(compiler);
+        // PCH dir first so GCC finds Arduino.h.gch before the SDK original.
+        // Only C++ files benefit from the PCH; C files skip it.
+        if !is_c {
+            if let Some(pch_i) = &pch_include { cmd.arg(pch_i); }
+        }
         cmd.args(&common_flags);
         if is_c {
             if !cflags.is_empty() { cmd.args(&cflags); }
@@ -388,50 +484,74 @@ pub fn run(req: &CompileRequest, board: &Board, sdk: &SdkPaths) -> Result<Compil
     // tsukilib packages (DHT, NeoPixel, etc.).  Without compiling these, the
     // linker has the headers but not the implementations → "undefined reference
     // to DHT::begin" etc.  Same logic as avr.rs Step 3.
+    //
+    // Cache: a SHA-256 fingerprint of every library source file's content plus
+    // the compiler flags is stored in .libs_sig.  If it matches and libs.a
+    // exists, the compilation step is skipped entirely — subsequent builds with
+    // unchanged libraries complete in milliseconds instead of tens of seconds.
     let libs_a = req.build_dir.join(format!("libs-{}.a", arch_tag));
     let lib_obj_dir = req.build_dir.join(format!("lib_objs-{}", arch_tag));
     std::fs::create_dir_all(&lib_obj_dir)?;
-    let mut lib_obj_files: Vec<PathBuf> = Vec::new();
-    for src_dir in &req.lib_source_dirs {
-        let lib_sources: Vec<PathBuf> = std::fs::read_dir(src_dir)
-            .into_iter().flatten().flatten()
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .filter(|e| matches!(
-                e.path().extension().and_then(|x| x.to_str()).unwrap_or(""),
-                "cpp" | "c"
-            ))
-            .map(|e| e.path())
-            .collect();
 
-        for src in lib_sources {
-            let obj = obj_path(&lib_obj_dir, &src);
-            let is_c = src.extension().and_then(|e| e.to_str()) == Some("c");
-            let compiler = if is_c { &cc } else { &cxx };
+    let libs_sig      = compute_libs_sig(&req.lib_source_dirs, &flags_sig);
+    let libs_sentinel = lib_obj_dir.join(".libs_sig");
+    let libs_fresh    = libs_a.exists()
+        && std::fs::read_to_string(&libs_sentinel)
+            .map(|s| s.trim() == libs_sig.as_str())
+            .unwrap_or(false);
 
-            let mut cmd = Command::new(compiler);
-            cmd.args(&common_flags);
-            if is_c {
-                if !cflags.is_empty() { cmd.args(&cflags); }
-            } else {
-                cmd.args(&cxxflags);
-            }
-            cmd.arg("-c").arg(&src).arg("-o").arg(&obj);
+    if !libs_fresh {
+        let mut lib_obj_files: Vec<PathBuf> = Vec::new();
+        for src_dir in &req.lib_source_dirs {
+            let lib_sources: Vec<PathBuf> = std::fs::read_dir(src_dir)
+                .into_iter().flatten().flatten()
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .filter(|e| matches!(
+                    e.path().extension().and_then(|x| x.to_str()).unwrap_or(""),
+                    "cpp" | "c"
+                ))
+                .map(|e| e.path())
+                .collect();
 
-            if req.verbose { eprintln!("  [lib] {}", src.display()); }
-            let out = cmd.output().expect("failed to spawn compiler for library");
-            if out.status.success() {
-                lib_obj_files.push(obj);
-            } else if req.verbose {
-                eprintln!("  [lib warn] {}: {}",
-                    src.display(), String::from_utf8_lossy(&out.stderr).trim());
+            for src in lib_sources {
+                let obj = obj_path(&lib_obj_dir, &src);
+                let is_c = src.extension().and_then(|e| e.to_str()) == Some("c");
+                let compiler = if is_c { &cc } else { &cxx };
+
+                let mut cmd = Command::new(compiler);
+                if !is_c {
+                    if let Some(pch_i) = &pch_include { cmd.arg(pch_i); }
+                }
+                cmd.args(&common_flags);
+                if is_c {
+                    if !cflags.is_empty() { cmd.args(&cflags); }
+                } else {
+                    cmd.args(&cxxflags);
+                }
+                cmd.arg("-c").arg(&src).arg("-o").arg(&obj);
+
+                if req.verbose { eprintln!("  [lib] {}", src.display()); }
+                let out = cmd.output().expect("failed to spawn compiler for library");
+                if out.status.success() {
+                    lib_obj_files.push(obj);
+                } else if req.verbose {
+                    eprintln!("  [lib warn] {}: {}",
+                        src.display(), String::from_utf8_lossy(&out.stderr).trim());
+                }
             }
         }
-    }
-    if !lib_obj_files.is_empty() {
-        let mut ar_cmd = Command::new(&ar);
-        ar_cmd.args(["rcs", libs_a.to_str().unwrap()]);
-        for obj in &lib_obj_files { ar_cmd.arg(obj); }
-        let _ = ar_cmd.output();
+        if !lib_obj_files.is_empty() {
+            let mut ar_cmd = Command::new(&ar);
+            ar_cmd.args(["rcs", libs_a.to_str().unwrap()]);
+            for obj in &lib_obj_files { ar_cmd.arg(obj); }
+            let _ = ar_cmd.output();
+        }
+        // Write sentinel only after a successful (or empty) libs build.
+        if libs_a.exists() || req.lib_source_dirs.is_empty() {
+            let _ = std::fs::write(&libs_sentinel, &libs_sig);
+        }
+    } else if req.verbose {
+        eprintln!("  [libs] cache hit — skipping library recompilation");
     }
 
     // ── Link ──────────────────────────────────────────────────────────────
@@ -758,6 +878,36 @@ fn resolve_tool(bin_dir: &Path, name: &str) -> String {
         if p.exists() { return p.to_string_lossy().to_string(); }
     }
     name.to_owned()
+}
+
+/// Compute a stable cache key for the libs.a archive.
+///
+/// The key covers both the compiler flags (so a flag change invalidates the
+/// cache) and the content of every library source file (so editing a library
+/// invalidates the cache).  Paths are sorted before hashing so that directory
+/// iteration order differences across platforms don't produce spurious misses.
+fn compute_libs_sig(lib_source_dirs: &[PathBuf], flags_sig: &str) -> String {
+    let mut sig = flags_sig.to_owned();
+    let mut all_sources: Vec<PathBuf> = lib_source_dirs.iter()
+        .flat_map(|d| {
+            std::fs::read_dir(d)
+                .into_iter().flatten().flatten()
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .filter(|e| matches!(
+                    e.path().extension().and_then(|x| x.to_str()).unwrap_or(""),
+                    "cpp" | "c"
+                ))
+                .map(|e| e.path())
+        })
+        .collect();
+    all_sources.sort();
+    for src in &all_sources {
+        sig.push_str(&src.to_string_lossy());
+        if let Some(h) = super::cache::hash_file(src) {
+            sig.push_str(&h);
+        }
+    }
+    super::cache::hash_str(&sig)
 }
 
 fn which_esptool() -> Option<String> {

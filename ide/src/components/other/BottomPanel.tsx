@@ -216,10 +216,16 @@ interface TermViewProps {
   onRunning:   (b: boolean) => void
 }
 
-// ── Startup noise filter ─────────────────────────────────────────────────────
+// ── Shell output noise filter ─────────────────────────────────────────────────
 // Suppresses well-known shell banner/header lines that add no value in the
 // IDE terminal. Covers cmd.exe and PowerShell banners (all languages).
-const STARTUP_NOISE_RE = [
+//
+// These patterns are applied PERMANENTLY (not just at startup) because they
+// are OS/shell metadata that can never appear in real user command output.
+// The previous approach of only filtering during a fixed startup time window
+// caused the banner to leak through whenever: the window expired before the
+// shell finished printing its header, or a session was reopened.
+const SHELL_NOISE_RE = [
   // cmd.exe / PowerShell Windows banner
   /^Microsoft Windows \[/i,
   /^\(c\) Microsoft Corporation/i,
@@ -229,18 +235,20 @@ const STARTUP_NOISE_RE = [
   /^PowerShell \d/i,
   // "Try the new cross-platform..."
   /^Try the new cross-platform/i,
-  // The programmatic cd commands we send (cmd echoes them even with /Q in interactive mode)
-  /^cd\s+\/d\s+/i,
-  /^Set-Location\s+-LiteralPath/i,
-  // cmd.exe prompt lines that appear during startup before first user input
-  // e.g. "C:\Users\NICKE\AppData\Local\Temp>"  or  "E:\GoDotIno\test\test>"
-  /^[A-Z]:\\.*>$/,
-  // Blank prompt line that cmd.exe emits on start with /Q
-  /^\s*$/,
+  // The programmatic cd/Set-Location commands we send ourselves — these get
+  // echoed back even with /Q when ConPTY is involved on some Windows builds.
+  /cd\s+\/d\s+/i,
+  /Set-Location\s+-LiteralPath/i,
+  // cmd.exe prompt lines (with or without a command echoed after ">"), e.g.:
+  //   "C:\Users\...\Temp>"
+  //   "C:\Users\...\Temp>cd /d \"C:\...\""
+  //   "C:\Users\...\test>"
+  // Matches any line starting with a Windows drive-path that contains ">".
+  /^[A-Z]:\\[^>]*(>|>\s*$)/,
 ]
 
-function isStartupNoise(line: string): boolean {
-  return STARTUP_NOISE_RE.some(re => re.test(line))
+function isShellNoise(line: string): boolean {
+  return SHELL_NOISE_RE.some(re => re.test(line))
 }
 
 function TermView({ session, projectPath, onAlive, onRunning }: TermViewProps) {
@@ -262,9 +270,7 @@ function TermView({ session, projectPath, onAlive, onRunning }: TermViewProps) {
   const lastCdPathRef  = useRef<string | null>(null)
   // Current PTY column count — kept in sync with the panel width via ResizeObserver
   const colsRef        = useRef(120)
-  // After startup noise window closes, stop filtering blank lines so normal
   // terminal output (e.g. blank lines between command output) is preserved.
-  const startupDoneRef = useRef(false)
 
   const push = useCallback((raw: string, kind: LineKind = 'output') => {
     setLines(prev => [...prev, makeLine(raw, kind)])
@@ -357,7 +363,7 @@ function TermView({ session, projectPath, onAlive, onRunning }: TermViewProps) {
             const seg = segments[i]
             if (seg === '\n') {
               // Commit current buffer as a new line
-              if (buf && !(startupDoneRef.current === false && isStartupNoise(buf))) push(buf, 'output')
+              if (buf && !isShellNoise(buf)) push(buf, 'output')
               buf = ''
             } else if (seg === '\r') {
               // Overwrite: replace the last line in state with whatever comes next
@@ -435,17 +441,12 @@ function TermView({ session, projectPath, onAlive, onRunning }: TermViewProps) {
               // below doesn't fire a duplicate cd for the same directory.
               lastCdPathRef.current = projectPath ?? null
               ptyWrite(ptyId, cdCmd).catch(() => {})
-              // Startup noise window closes after cd is sent — subsequent
-              // blank lines / prompts are real terminal output.
-              setTimeout(() => { startupDoneRef.current = true }, 800)
             }).catch(() => {})
           }, 300)
         }
 
         setReady(true)
         readyRef.current = true
-        // If there's no project path, close the startup noise window immediately
-        if (!rawCwd) setTimeout(() => { startupDoneRef.current = true }, 500)
         setTimeout(() => inputRef.current?.focus(), 50)
       } catch (e) {
         if (!cancelled) {
@@ -511,6 +512,8 @@ function TermView({ session, projectPath, onAlive, onRunning }: TermViewProps) {
 
     const sendCd = () => {
       if (!readyRef.current) return
+      // Guard: don't re-send if the startup effect already handled this path
+      if (projectPath === lastCdPathRef.current) return
       // Verify the path exists before trying to cd — avoids the
       // "El nombre de archivo..." error when a project path is stale or
       // the directory hasn't been created yet.
@@ -746,12 +749,37 @@ function Terminal() {
       return { skip: false, type: 'info' }
     }
 
+    // Clean a raw output line for the Output tab:
+    //   1. Split on \n first — a single IPC event can contain multiple logical lines
+    //      (tsuki-ux table rows, multi-line error blocks, etc.)
+    //   2. For each sub-line, handle \r (spinner overwrite): keep text after last \r
+    //   3. Strip ANSI escape sequences — the Output tab applies its own CSS colors
+    function stripAnsi(s: string): string {
+      return s
+        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC
+        .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '') // CSI (colors, cursor)
+        .replace(/\x1b[^\[\]][^\x1b]*/g, '') // DEC / other
+    }
+    function cleanOutputLines(raw: string): string[] {
+      // Split on \n (handles CRLF too), then for each segment resolve \r overwrites
+      return raw.split('\n').flatMap(segment => {
+        const crParts = segment.split('\r')
+        // Each \r resets the cursor to the start of the line (spinner animation).
+        // The last part is what the user actually sees on screen.
+        const visible = crParts[crParts.length - 1]
+        const clean   = stripAnsi(visible)
+        return clean ? [clean] : []
+      })
+    }
+
     const run = (cmdStr: string, argsArr: string[]): Promise<number> => {
       addLog('info', `> ${[cmdStr, ...argsArr].join(' ')}`)
       return new Promise<number>(resolve => {
-        spawnProcess(cmdStr, argsArr, cwd ?? projectPathRef.current ?? undefined, (line, _isErr) => {
+        spawnProcess(cmdStr, argsArr, cwd ?? projectPathRef.current ?? undefined, (rawLine, _isErr) => {
+          const lines = cleanOutputLines(rawLine)
+          for (const line of lines) {
           const { skip, type } = processLine(line)
-          if (skip) return
+          if (skip) continue
           addLog(type, line)
           const m = line.trimStart().match(COMPILER_DIAG)
           if (m && (m[4].startsWith('error') || m[4] === 'fatal error' || m[4] === 'warning')) {
@@ -768,6 +796,7 @@ function Terminal() {
               setProblems([...buildProblems])
             }
           }
+          } // end for (const line of lines)
         }).then(handle => {
           handle.done.then(code => {
             handle.dispose()
@@ -1338,6 +1367,9 @@ export default function BottomPanel() {
                     </button>
                   </div>
                 )
+                return showOutHdr
+                  ? [<SectionHeader key={`hdr-output-${gi}`} label="OUTPUT" />, lineEl]
+                  : lineEl
               })
             })()}
             <div ref={endRef} />

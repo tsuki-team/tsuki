@@ -1,45 +1,79 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  tsuki-flash :: boards  —  supported board database
+//
+//  The Arduino Uno is the only board built into tsuki-flash.
+//  All other boards are distributed as board packages (tsuki_board.toml)
+//  and loaded at runtime from the user's boards directory.
+//
+//  Board packages live at:
+//    Linux/macOS: ~/.local/share/tsuki/boards/<id>/<version>/tsuki_board.toml
+//    Windows:     %APPDATA%\tsuki\boards\<id>\<version>\tsuki_board.toml
+//
+//  Install a board package with: tsuki boards install <id>
 // ─────────────────────────────────────────────────────────────────────────────
 
 use std::fmt;
+use std::path::Path;
 
 /// Which compiler/programmer family to use.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Toolchain {
     /// AVR microcontrollers — avr-gcc + avrdude
     Avr {
-        mcu:   &'static str,   // e.g. "atmega328p"
-        f_cpu: u32,            // e.g. 16_000_000
-        programmer: &'static str, // e.g. "arduino"
-        baud:  u32,
+        mcu:        &'static str,   // e.g. "atmega328p"
+        f_cpu:      u32,            // e.g. 16_000_000
+        programmer: &'static str,   // e.g. "arduino"
+        baud:       u32,
     },
     /// Atmel SAM ARM — arm-none-eabi-gcc + bossac
     Sam {
-        mcu: &'static str,
+        mcu:   &'static str,
         f_cpu: u32,
     },
     /// Raspberry Pi RP2040 — arm-none-eabi-gcc + picotool/uf2
     Rp2040,
     /// Espressif ESP32 — xtensa-esp32-elf-gcc + esptool.py
     Esp32 {
-        variant: &'static str, // e.g. "esp32", "esp32s2", "esp32c3"
+        variant: &'static str,  // e.g. "esp32", "esp32s2", "esp32c3"
     },
     /// Espressif ESP8266 — xtensa-lx106-elf-gcc + esptool.py
     Esp8266,
 }
 
+/// A dynamic toolchain parsed from a tsuki_board.toml.
+#[derive(Debug, Clone)]
+pub enum DynToolchain {
+    Avr   { mcu: String, f_cpu: u32, programmer: String, baud: u32 },
+    Sam   { mcu: String, f_cpu: u32 },
+    Rp2040,
+    Esp32 { variant: String },
+    Esp8266,
+}
+
 #[derive(Debug, Clone)]
 pub struct Board {
-    pub id:       &'static str,
-    pub name:     &'static str,
-    pub fqbn:     &'static str,
-    pub variant:  &'static str,   // pins_arduino.h variant folder
-    pub flash_kb: u32,
-    pub ram_kb:   u32,
+    pub id:        &'static str,
+    pub name:      &'static str,
+    pub fqbn:      &'static str,
+    pub variant:   &'static str,   // pins_arduino.h variant folder
+    pub flash_kb:  u32,
+    pub ram_kb:    u32,
     pub toolchain: Toolchain,
     /// Compile-time defines specific to this board
-    pub defines:  &'static [&'static str],
+    pub defines:   &'static [&'static str],
+}
+
+/// A board loaded from a `tsuki_board.toml` package file.
+#[derive(Debug, Clone)]
+pub struct DynBoard {
+    pub id:        String,
+    pub name:      String,
+    pub fqbn:      String,
+    pub variant:   String,
+    pub flash_kb:  u32,
+    pub ram_kb:    u32,
+    pub toolchain: DynToolchain,
+    pub defines:   Vec<String>,
 }
 
 impl fmt::Display for Board {
@@ -48,19 +82,40 @@ impl fmt::Display for Board {
     }
 }
 
+impl fmt::Display for DynBoard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.name, self.fqbn)
+    }
+}
+
 impl Board {
-    /// Return the board catalog.
+    /// Return the built-in board catalog (Arduino Uno only).
     pub fn catalog() -> &'static [Board] {
         &BOARDS
     }
 
-    /// Find a board by its short ID (case-insensitive).
+    /// Find a built-in board by its short ID (case-insensitive).
     pub fn find(id: &str) -> Option<&'static Board> {
-        BOARDS.iter().find(|b| b.id.eq_ignore_ascii_case(id))
-            .or_else(|| crate::platforms::find_dynamic(id))
+        let id_lower = id.to_lowercase();
+        BOARDS.iter().find(|b| b.id.eq_ignore_ascii_case(&id_lower))
     }
 
-    /// The `-mmcu` flag value (AVR only).
+    /// Find a board by ID, checking user boards directory first, then built-in catalog.
+    /// Pass the boards_dir from tsuki config (packages.boards_dir).
+    pub fn find_with_boards_dir<'a>(id: &str, boards_dir: Option<&Path>) -> BoardLookup {
+        // 1. Check user-installed board packages first
+        if let Some(dir) = boards_dir {
+            if let Some(b) = DynBoard::load_from_dir(id, dir) {
+                return BoardLookup::Dynamic(b);
+            }
+        }
+        // 2. Fall back to built-in catalog
+        if let Some(b) = Board::find(id) {
+            return BoardLookup::Static(b);
+        }
+        BoardLookup::NotFound
+    }
+
     pub fn avr_mcu(&self) -> Option<&'static str> {
         if let Toolchain::Avr { mcu, .. } = &self.toolchain {
             Some(mcu)
@@ -69,18 +124,16 @@ impl Board {
         }
     }
 
-    /// CPU frequency in Hz.
     pub fn f_cpu(&self) -> u32 {
         match &self.toolchain {
-            Toolchain::Avr { f_cpu, .. } => *f_cpu,
-            Toolchain::Sam { f_cpu, .. } => *f_cpu,
-            Toolchain::Rp2040            => 133_000_000,
-            Toolchain::Esp32 { .. }      => 240_000_000,
-            Toolchain::Esp8266           => 80_000_000,
+            Toolchain::Avr { f_cpu, .. }  => *f_cpu,
+            Toolchain::Sam { f_cpu, .. }  => *f_cpu,
+            Toolchain::Rp2040             => 133_000_000,
+            Toolchain::Esp32 { .. }       => 240_000_000,
+            Toolchain::Esp8266            => 80_000_000,
         }
     }
 
-    /// avrdude programmer type (AVR only).
     pub fn avrdude_programmer(&self) -> Option<(&'static str, u32)> {
         if let Toolchain::Avr { programmer, baud, .. } = &self.toolchain {
             Some((programmer, *baud))
@@ -89,8 +142,6 @@ impl Board {
         }
     }
 
-    /// The sub-architecture string used in the Arduino SDK path.
-    /// e.g.  "avr", "sam", "samd", "esp32", …
     pub fn arch(&self) -> &'static str {
         match &self.toolchain {
             Toolchain::Avr { .. }   => "avr",
@@ -102,12 +153,159 @@ impl Board {
     }
 }
 
+/// Result of a board lookup across built-in + user-installed boards.
+pub enum BoardLookup {
+    Static(&'static Board),
+    Dynamic(DynBoard),
+    NotFound,
+}
+
+impl DynBoard {
+    /// Attempt to load a board from the boards dir: <dir>/<id>/<version>/tsuki_board.toml
+    /// Uses the newest (lexicographically last) version found.
+    pub fn load_from_dir(id: &str, boards_dir: &Path) -> Option<DynBoard> {
+        let board_dir = boards_dir.join(id);
+        if !board_dir.exists() {
+            return None;
+        }
+        // Find the latest version directory
+        let mut versions: Vec<String> = std::fs::read_dir(&board_dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        versions.sort();
+        let version = versions.last()?;
+        let toml_path = board_dir.join(version).join("tsuki_board.toml");
+        Self::load_from_toml(&toml_path)
+    }
+
+    /// Parse a `tsuki_board.toml` file into a DynBoard.
+    pub fn load_from_toml(path: &Path) -> Option<DynBoard> {
+        let content = std::fs::read_to_string(path).ok()?;
+        Self::parse_toml(&content)
+    }
+
+    /// Minimal TOML parser for tsuki_board.toml format.
+    pub fn parse_toml(content: &str) -> Option<DynBoard> {
+        let mut section = "";
+        let mut id = String::new();
+        let mut name = String::new();
+        let mut fqbn = String::new();
+        let mut variant = String::new();
+        let mut flash_kb: u32 = 0;
+        let mut ram_kb: u32 = 0;
+        let mut tc_type = String::new();
+        let mut tc_mcu = String::new();
+        let mut tc_f_cpu: u32 = 0;
+        let mut tc_programmer = String::new();
+        let mut tc_baud: u32 = 0;
+        let mut tc_variant = String::new();
+        let mut defines: Vec<String> = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                section = if line == "[board]" { "board" }
+                           else if line == "[toolchain]" { "toolchain" }
+                           else if line == "[defines]" { "defines" }
+                           else { "" };
+                continue;
+            }
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+
+            // Parse values array: values = ["A", "B"]
+            if section == "defines" && line.starts_with("values") {
+                let start = line.find('[').unwrap_or(0) + 1;
+                let end = line.rfind(']').unwrap_or(line.len());
+                let inner = &line[start..end];
+                defines = inner
+                    .split(',')
+                    .map(|s| s.trim().trim_matches('"').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                continue;
+            }
+
+            let mut parts = line.splitn(2, '=');
+            let key = parts.next()?.trim();
+            let val = parts.next()?.trim().trim_matches('"').to_string();
+
+            match (section, key) {
+                ("board", "id")       => id = val,
+                ("board", "name")     => name = val,
+                ("board", "fqbn")     => fqbn = val,
+                ("board", "variant")  => variant = val,
+                ("board", "flash_kb") => flash_kb = val.parse().unwrap_or(0),
+                ("board", "ram_kb")   => ram_kb = val.parse().unwrap_or(0),
+                ("toolchain", "type")       => tc_type = val,
+                ("toolchain", "mcu")        => tc_mcu = val,
+                ("toolchain", "f_cpu")      => tc_f_cpu = val.parse().unwrap_or(0),
+                ("toolchain", "programmer") => tc_programmer = val,
+                ("toolchain", "baud")       => tc_baud = val.parse().unwrap_or(0),
+                ("toolchain", "variant")    => tc_variant = val,
+                _ => {}
+            }
+        }
+
+        if id.is_empty() || fqbn.is_empty() {
+            return None;
+        }
+
+        let toolchain = match tc_type.as_str() {
+            "avr" => DynToolchain::Avr {
+                mcu: tc_mcu,
+                f_cpu: tc_f_cpu,
+                programmer: tc_programmer,
+                baud: tc_baud,
+            },
+            "sam"    => DynToolchain::Sam { mcu: tc_mcu, f_cpu: tc_f_cpu },
+            "rp2040" => DynToolchain::Rp2040,
+            "esp32"  => DynToolchain::Esp32 { variant: tc_variant },
+            _        => DynToolchain::Esp8266,
+        };
+
+        Some(DynBoard { id, name, fqbn, variant, flash_kb, ram_kb, toolchain, defines })
+    }
+
+    pub fn f_cpu(&self) -> u32 {
+        match &self.toolchain {
+            DynToolchain::Avr { f_cpu, .. }  => *f_cpu,
+            DynToolchain::Sam { f_cpu, .. }  => *f_cpu,
+            DynToolchain::Rp2040             => 133_000_000,
+            DynToolchain::Esp32 { .. }       => 240_000_000,
+            DynToolchain::Esp8266            => 80_000_000,
+        }
+    }
+
+    pub fn arch(&self) -> &str {
+        match &self.toolchain {
+            DynToolchain::Avr { .. }   => "avr",
+            DynToolchain::Sam { .. }   => "sam",
+            DynToolchain::Rp2040       => "rp2040",
+            DynToolchain::Esp32 { .. } => "esp32",
+            DynToolchain::Esp8266      => "esp8266",
+        }
+    }
+
+    pub fn avrdude_programmer(&self) -> Option<(String, u32)> {
+        if let DynToolchain::Avr { programmer, baud, .. } = &self.toolchain {
+            Some((programmer.clone(), *baud))
+        } else {
+            None
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-//  Static board table
+//  Static board table — Arduino Uno only.
+//  All other boards are board packages installed via `tsuki boards install`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 static BOARDS: &[Board] = &[
-    // ── AVR ───────────────────────────────────────────────────────────────────
     Board {
         id: "uno", name: "Arduino Uno",
         fqbn: "arduino:avr:uno",
@@ -118,171 +316,5 @@ static BOARDS: &[Board] = &[
             programmer: "arduino", baud: 115200,
         },
         defines: &["ARDUINO_AVR_UNO", "ARDUINO_ARCH_AVR"],
-    },
-    Board {
-        id: "nano", name: "Arduino Nano",
-        fqbn: "arduino:avr:nano",
-        variant: "eightanaloginputs",
-        flash_kb: 32, ram_kb: 2,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega328p", f_cpu: 16_000_000,
-            programmer: "arduino", baud: 115200,
-        },
-        defines: &["ARDUINO_AVR_NANO", "ARDUINO_ARCH_AVR"],
-    },
-    Board {
-        id: "nano_old", name: "Arduino Nano (old bootloader)",
-        fqbn: "arduino:avr:nano:cpu=atmega328old",
-        variant: "eightanaloginputs",
-        flash_kb: 32, ram_kb: 2,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega328p", f_cpu: 16_000_000,
-            programmer: "arduino", baud: 57600,
-        },
-        defines: &["ARDUINO_AVR_NANO", "ARDUINO_ARCH_AVR"],
-    },
-    Board {
-        id: "mega", name: "Arduino Mega 2560",
-        fqbn: "arduino:avr:mega",
-        variant: "mega",
-        flash_kb: 256, ram_kb: 8,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega2560", f_cpu: 16_000_000,
-            programmer: "wiring", baud: 115200,
-        },
-        defines: &["ARDUINO_AVR_MEGA2560", "ARDUINO_ARCH_AVR"],
-    },
-    Board {
-        id: "leonardo", name: "Arduino Leonardo",
-        fqbn: "arduino:avr:leonardo",
-        variant: "leonardo",
-        flash_kb: 32, ram_kb: 2,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega32u4", f_cpu: 16_000_000,
-            programmer: "avr109", baud: 57600,
-        },
-        defines: &["ARDUINO_AVR_LEONARDO", "ARDUINO_ARCH_AVR", "USB_VID=0x2341", "USB_PID=0x0036"],
-    },
-    Board {
-        id: "micro", name: "Arduino Micro",
-        fqbn: "arduino:avr:micro",
-        variant: "micro",
-        flash_kb: 32, ram_kb: 2,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega32u4", f_cpu: 16_000_000,
-            programmer: "avr109", baud: 57600,
-        },
-        defines: &["ARDUINO_AVR_MICRO", "ARDUINO_ARCH_AVR", "USB_VID=0x2341", "USB_PID=0x0037"],
-    },
-    Board {
-        id: "pro_mini_5v", name: "Arduino Pro Mini 5V",
-        fqbn: "arduino:avr:pro:cpu=16MHzatmega328",
-        variant: "eightanaloginputs",
-        flash_kb: 32, ram_kb: 2,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega328p", f_cpu: 16_000_000,
-            programmer: "arduino", baud: 57600,
-        },
-        defines: &["ARDUINO_AVR_PRO", "ARDUINO_ARCH_AVR"],
-    },
-    Board {
-        id: "pro_mini_3v3", name: "Arduino Pro Mini 3.3V",
-        fqbn: "arduino:avr:pro:cpu=8MHzatmega328",
-        variant: "eightanaloginputs",
-        flash_kb: 32, ram_kb: 2,
-        toolchain: Toolchain::Avr {
-            mcu: "atmega328p", f_cpu: 8_000_000,
-            programmer: "arduino", baud: 57600,
-        },
-        defines: &["ARDUINO_AVR_PRO", "ARDUINO_ARCH_AVR"],
-    },
-    // ── ARM SAM ───────────────────────────────────────────────────────────────
-    Board {
-        id: "due", name: "Arduino Due",
-        fqbn: "arduino:sam:arduino_due_x",
-        variant: "arduino_due_x",
-        flash_kb: 512, ram_kb: 96,
-        toolchain: Toolchain::Sam {
-            mcu: "cortex-m3", f_cpu: 84_000_000,
-        },
-        defines: &["ARDUINO_SAM_DUE", "ARDUINO_ARCH_SAM", "__SAM3X8E__"],
-    },
-    // ── RP2040 ────────────────────────────────────────────────────────────────
-    Board {
-        id: "pico", name: "Raspberry Pi Pico",
-        fqbn: "rp2040:rp2040:rpipico",
-        variant: "rpipico",
-        flash_kb: 2048, ram_kb: 264,
-        toolchain: Toolchain::Rp2040,
-        defines: &["ARDUINO_RASPBERRY_PI_PICO", "ARDUINO_ARCH_RP2040", "PICO_RP2040=1", "PICO_BOARD=\"rpipico\""],
-    },
-    // ── ESP32 ─────────────────────────────────────────────────────────────────
-    Board {
-        id: "esp32", name: "ESP32 Dev Module",
-        fqbn: "esp32:esp32:esp32",
-        variant: "esp32",
-        flash_kb: 4096, ram_kb: 520,
-        toolchain: Toolchain::Esp32 { variant: "esp32" },
-        defines: &["ARDUINO_ESP32_DEV", "ARDUINO_ARCH_ESP32", "ESP32"],
-    },
-    Board {
-        id: "esp32s2", name: "ESP32-S2 Dev Module",
-        fqbn: "esp32:esp32:esp32s2",
-        variant: "esp32s2",
-        flash_kb: 4096, ram_kb: 320,
-        toolchain: Toolchain::Esp32 { variant: "esp32s2" },
-        defines: &["ARDUINO_ESP32S2_DEV", "ARDUINO_ARCH_ESP32", "CONFIG_IDF_TARGET_ESP32S2"],
-    },
-    Board {
-        id: "esp32c3", name: "ESP32-C3 Dev Module",
-        fqbn: "esp32:esp32:esp32c3",
-        variant: "esp32c3",
-        flash_kb: 4096, ram_kb: 400,
-        toolchain: Toolchain::Esp32 { variant: "esp32c3" },
-        defines: &["ARDUINO_ESP32C3_DEV", "ARDUINO_ARCH_ESP32", "CONFIG_IDF_TARGET_ESP32C3"],
-    },
-    // ── ESP8266 ───────────────────────────────────────────────────────────────
-    Board {
-        id: "esp8266", name: "ESP8266 Generic",
-        fqbn: "esp8266:esp8266:generic",
-        variant: "esp8266",
-        flash_kb: 1024, ram_kb: 80,
-        toolchain: Toolchain::Esp8266,
-        defines: &["ARDUINO_ESP8266_GENERIC", "ARDUINO_ARCH_ESP8266", "ESP8266"],
-    },
-    Board {
-        id: "d1_mini", name: "Wemos D1 Mini",
-        fqbn: "esp8266:esp8266:d1_mini",
-        variant: "d1_mini",
-        flash_kb: 4096, ram_kb: 80,
-        toolchain: Toolchain::Esp8266,
-        defines: &["ARDUINO_ESP8266_WEMOS_D1MINI", "ARDUINO_ARCH_ESP8266", "ESP8266"],
-    },
-    // Alias: "lolin_d1_mini" and "wemos_d1_mini" both resolve to the same board.
-    // The Lolin (formerly Wemos) D1 Mini is identical hardware — same ESP8266,
-    // same 4MB flash, same pinout.  Users may refer to it by either brand name.
-    Board {
-        id: "lolin_d1_mini", name: "Lolin Wemos D1 Mini",
-        fqbn: "esp8266:esp8266:d1_mini",
-        variant: "d1_mini",
-        flash_kb: 4096, ram_kb: 80,
-        toolchain: Toolchain::Esp8266,
-        defines: &["ARDUINO_ESP8266_WEMOS_D1MINI", "ARDUINO_ARCH_ESP8266", "ESP8266"],
-    },
-    Board {
-        id: "wemos_d1_mini", name: "Wemos D1 Mini (alias)",
-        fqbn: "esp8266:esp8266:d1_mini",
-        variant: "d1_mini",
-        flash_kb: 4096, ram_kb: 80,
-        toolchain: Toolchain::Esp8266,
-        defines: &["ARDUINO_ESP8266_WEMOS_D1MINI", "ARDUINO_ARCH_ESP8266", "ESP8266"],
-    },
-    Board {
-        id: "nodemcu", name: "NodeMCU 1.0 (ESP-12E)",
-        fqbn: "esp8266:esp8266:nodemcuv2",
-        variant: "nodemcu",
-        flash_kb: 4096, ram_kb: 80,
-        toolchain: Toolchain::Esp8266,
-        defines: &["ARDUINO_ESP8266_NODEMCU_ESP12E", "ARDUINO_ARCH_ESP8266", "ESP8266"],
     },
 ];

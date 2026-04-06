@@ -2342,6 +2342,10 @@ Root: HKCU; Subkey: "Software\@@app_name@@"; \
       ValueType: string; ValueName: "RegistryURL"; ValueData: "@@registry_url@@"; \
       Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\@@app_name@@"; \
+      ValueType: string; ValueName: "TsukiBinary"; \
+      ValueData: "{app}\bin\@@binary@@.exe"; \
+      Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\@@app_name@@"; \
       ValueType: string; ValueName: "CoreBinary"; \
       ValueData: "{app}\bin\@@core_binary@@.exe"; \
       Flags: uninsdeletekey

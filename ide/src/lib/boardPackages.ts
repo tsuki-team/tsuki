@@ -143,3 +143,99 @@ export function resolvePlatforms(
 
   return resolved
 }
+
+
+// ── Legacy static board-package catalogue (used by SettingsScreen) ─────────────
+// These represent installable board support packages (toolchain + core bundles).
+// The UI in SettingsScreen consumes this directly; the new registry types above
+// are used by PlatformsSidebar which fetches data at runtime.
+
+export type BoardPkgIconName = 'CircuitBoard' | 'Wifi' | 'Cpu' | 'Box'
+
+export interface BoardPkg {
+  id:               string
+  name:             string
+  iconName:         BoardPkgIconName
+  version:          string
+  size:             string
+  arch:             string
+  desc:             string
+  boards:           string[]
+  precompileScript: string[]
+}
+
+export const BOARD_PACKAGES: BoardPkg[] = [
+  {
+    id:       'avr',
+    name:     'AVR (Arduino)',
+    iconName: 'CircuitBoard',
+    version:  '7.3.0',
+    size:     '~62 MB',
+    arch:     'AVR',
+    desc:     'GCC toolchain and Arduino core for all ATmega/ATtiny boards: Uno, Nano, Mega, Leonardo, Pro Mini, and more.',
+    boards:   ['uno', 'nano', 'nano_old', 'mega', 'leonardo', 'micro', 'pro_mini_5v', 'pro_mini_3v3', 'due'],
+    precompileScript: [
+      '▶  Descargando avr-gcc 7.3.0 …',
+      '✔  avr-gcc extraído en ~/.tsuki/toolchains/avr',
+      '▶  Descargando Arduino AVR Core 1.8.6 …',
+      '✔  Arduino AVR Core extraído',
+      '▶  Precompilando core.a …',
+      '✔  core.a listo →',
+    ],
+  },
+  {
+    id:       'esp32',
+    name:     'ESP32',
+    iconName: 'Wifi',
+    version:  '5.4.0',
+    size:     '~420 MB',
+    arch:     'ESP32',
+    desc:     'Xtensa GCC toolchain and ESP-IDF Arduino core for all ESP32 variants: ESP32, ESP32-S2, ESP32-C3, and more.',
+    boards:   ['esp32', 'esp32s2', 'esp32c3'],
+    precompileScript: [
+      '▶  Descargando xtensa-esp32-gcc 12.2.0 …',
+      '✔  xtensa-esp32-gcc extraído en ~/.tsuki/toolchains/esp32',
+      '▶  Descargando ESP32 Arduino Core 3.0.7 …',
+      '✔  ESP32 Arduino Core extraído',
+      '▶  Precompilando sdk_config …',
+      '▶  Precompilando libfreertos.a …',
+      '✔  Core ESP32 listo →',
+    ],
+  },
+  {
+    id:       'esp8266',
+    name:     'ESP8266',
+    iconName: 'Wifi',
+    version:  '3.1.2',
+    size:     '~180 MB',
+    arch:     'ESP8266',
+    desc:     'Tensilica L106 toolchain and ESP8266 Arduino core for NodeMCU, Wemos D1 Mini, and other ESP8266 boards.',
+    boards:   ['esp8266', 'nodemcu', 'd1_mini', 'lolin_d1_mini'],
+    precompileScript: [
+      '▶  Descargando xtensa-lx106-gcc 10.3.0 …',
+      '✔  xtensa-lx106-gcc extraído en ~/.tsuki/toolchains/esp8266',
+      '▶  Descargando ESP8266 Arduino Core 3.1.2 …',
+      '✔  ESP8266 Arduino Core extraído',
+      '▶  Precompilando core.a …',
+      '✔  Core ESP8266 listo →',
+    ],
+  },
+  {
+    id:       'rp2040',
+    name:     'RP2040 (Pico)',
+    iconName: 'Cpu',
+    version:  '4.0.1',
+    size:     '~290 MB',
+    arch:     'RP2040',
+    desc:     'ARM GCC toolchain and Raspberry Pi Pico Arduino core for the RP2040 microcontroller.',
+    boards:   ['pico'],
+    precompileScript: [
+      '▶  Descargando arm-none-eabi-gcc 13.2.1 …',
+      '✔  arm-none-eabi-gcc extraído en ~/.tsuki/toolchains/rp2040',
+      '▶  Descargando Pico Arduino Core 4.0.1 …',
+      '✔  Pico Arduino Core extraído',
+      '▶  Precompilando core.a …',
+      '✔  Core RP2040 listo →',
+    ],
+  },
+]

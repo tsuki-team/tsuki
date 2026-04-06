@@ -1,0 +1,16 @@
+[board]
+id          = "nodemcu"
+name        = "NodeMCU 1.0 (ESP-12E)"
+fqbn        = "esp8266:esp8266:nodemcuv2"
+variant     = "nodemcu"
+flash_kb    = 4096
+ram_kb      = 80
+description = "NodeMCU 1.0 ESP-12E — ESP8266, WiFi, 4MB flash, LuA-style pinout"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "esp8266"
+
+[defines]
+values = ["ARDUINO_ESP8266_NODEMCU_ESP12E", "ARDUINO_ARCH_ESP8266", "ESP8266"]

@@ -17,9 +17,18 @@ func newConfigCmd() *cobra.Command {
 
 The config file is stored at ~/.config/tsuki/config.json.
 
+Settings are organized into sections:
+  core      — binaries, backend, default board and baud
+  output    — color, verbosity, auto-detection
+  packages  — package dirs, registry URLs, signing keys
+
 Use 'tsuki config set <key> <value>' to set a value.
+  Simple keys:   tsuki config set verbose true
+  Package keys:  tsuki config set packages.libs_dir /my/libs
+
 Use 'tsuki config get <key>' to read a specific key.
-Use 'tsuki config show' to display all settings.`,
+Use 'tsuki config show' to display all settings grouped by section.
+Use 'tsuki config show --section packages' to show one section only.`,
 	}
 
 	cmd.AddCommand(
@@ -38,10 +47,22 @@ func newConfigSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set a configuration key",
+		Long: `Set a configuration key.
+
+For top-level keys use the plain key name.
+For package settings, prefix with "packages.":
+
+  tsuki config set default_board esp32
+  tsuki config set packages.libs_dir /home/user/tsuki-libs
+  tsuki config set packages.verify_signatures true
+  tsuki config set packages.registry_urls https://example.com/registry.json`,
 		Example: `  tsuki config set default_board esp32
   tsuki config set arduino_cli /usr/local/bin/arduino-cli
   tsuki config set verbose true
-  tsuki config set default_baud 115200`,
+  tsuki config set default_baud 115200
+  tsuki config set packages.libs_dir /my/libs
+  tsuki config set packages.boards_dir /my/boards
+  tsuki config set packages.verify_signatures true`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
@@ -55,8 +76,14 @@ func newConfigSetCmd() *cobra.Command {
 				ui.Fail(err.Error())
 				fmt.Fprintln(os.Stderr, "")
 				ui.Info("Available keys:")
-				for _, e := range config.Default().AllEntries() {
-					ui.Step("  "+e.Key, e.Comment)
+				sections := c.AllEntriesBySection()
+				for _, sec := range []string{"core", "output", "packages"} {
+					if entries, ok := sections[sec]; ok {
+						ui.ColorMuted.Printf("\n  [%s]\n", sec)
+						for _, e := range entries {
+							ui.Step("  "+e.Key, e.Comment)
+						}
+					}
 				}
 				return fmt.Errorf("unknown key")
 			}
@@ -66,8 +93,6 @@ func newConfigSetCmd() *cobra.Command {
 			}
 
 			ui.Success(fmt.Sprintf("Set %s = %s", key, value))
-
-			// Show updated entry in styled box
 			ui.PrintConfig("tsuki config", []ui.ConfigEntry{
 				{Key: key, Value: value},
 			}, false)
@@ -81,21 +106,17 @@ func newConfigSetCmd() *cobra.Command {
 // ── config get ────────────────────────────────────────────────────────────────
 
 func newConfigGetCmd() *cobra.Command {
-	var (
-		rawFlag   bool
-		paramFlag string
-	)
+	var rawFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get a configuration key",
 		Example: `  tsuki config get default_board
-  tsuki config get default_board --raw
-  tsuki config get default_board --param`,
+  tsuki config get packages.libs_dir
+  tsuki config get packages.registry_urls --raw`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := args[0]
-			_ = paramFlag
 
 			c, err := config.Load()
 			if err != nil {
@@ -112,7 +133,6 @@ func newConfigGetCmd() *cobra.Command {
 				return nil
 			}
 
-			// Find comment
 			comment := ""
 			for _, e := range c.AllEntries() {
 				if e.Key == key {
@@ -130,20 +150,23 @@ func newConfigGetCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&rawFlag, "raw", false, "print raw value only (no styling)")
-	cmd.Flags().StringVar(&paramFlag, "param", "", "filter by param (same as key)")
 	return cmd
 }
 
 // ── config show ───────────────────────────────────────────────────────────────
 
 func newConfigShowCmd() *cobra.Command {
-	var rawFlag bool
+	var (
+		rawFlag     bool
+		sectionFlag string
+	)
 
 	cmd := &cobra.Command{
 		Use:     "show",
-		Short:   "Show all configuration values",
+		Short:   "Show all configuration values, grouped by section",
 		Aliases: []string{"list", "ls"},
 		Example: `  tsuki config show
+  tsuki config show --section packages
   tsuki config show --raw`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := config.Load()
@@ -151,22 +174,51 @@ func newConfigShowCmd() *cobra.Command {
 				return err
 			}
 
-			entries := c.AllEntries()
-			uiEntries := make([]ui.ConfigEntry, len(entries))
-			for i, e := range entries {
-				uiEntries[i] = ui.ConfigEntry{
-					Key:     e.Key,
-					Value:   e.Value,
-					Comment: e.Comment,
+			sections := c.AllEntriesBySection()
+
+			// Section display order
+			order := []string{"core", "output", "packages"}
+
+			if rawFlag {
+				// Raw: flat key=value output
+				for _, sec := range order {
+					if sectionFlag != "" && sec != sectionFlag {
+						continue
+					}
+					entries := sections[sec]
+					for _, e := range entries {
+						fmt.Printf("%s=%v\n", e.Key, e.Value)
+					}
 				}
+				return nil
 			}
 
-			ui.PrintConfig("tsuki config", uiEntries, rawFlag)
+			for _, sec := range order {
+				if sectionFlag != "" && sec != sectionFlag {
+					continue
+				}
+				entries, ok := sections[sec]
+				if !ok {
+					continue
+				}
+
+				uiEntries := make([]ui.ConfigEntry, len(entries))
+				for i, e := range entries {
+					uiEntries[i] = ui.ConfigEntry{
+						Key:     e.Key,
+						Value:   e.Value,
+						Comment: e.Comment,
+					}
+				}
+				ui.PrintConfig(fmt.Sprintf("tsuki config  [%s]", sec), uiEntries, false)
+				fmt.Println()
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&rawFlag, "raw", false, "print raw key=value pairs")
+	cmd.Flags().StringVar(&sectionFlag, "section", "", "show only one section (core, output, packages)")
 	return cmd
 }
 
@@ -192,15 +244,8 @@ func newConfigPathCmd() *cobra.Command {
 
 // ── config registry ───────────────────────────────────────────────────────────
 //
-// Manages the ordered list of package registry URLs (registry_urls in config).
+// Manages the ordered list of package registry URLs (packages.registry_urls).
 // First entry has highest priority — on name collision, the first registry wins.
-//
-//	tsuki config registry list
-//	tsuki config registry add    <url>
-//	tsuki config registry remove <url>
-//	tsuki config registry up     <url>   — raise priority
-//	tsuki config registry down   <url>   — lower priority
-//	tsuki config registry clear          — remove all custom registries (revert to default)
 
 func newConfigRegistryCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -209,20 +254,17 @@ func newConfigRegistryCmd() *cobra.Command {
 		Long: `Manage the ordered list of package registry URLs.
 
 Registries are consulted in priority order — the first one wins on package
-name collisions.  The built-in default registry is always the last fallback.
+name collisions. The built-in default registry is always the last fallback.
+
+These settings live under the "packages" section of tsuki config.
 
 Priority chain (highest → lowest):
   1. tsuki_REGISTRY env var  (single URL, highest — overrides everything)
-  2. registry_urls list      (managed by this command)
-  3. Built-in default        (https://raw.githubusercontent.com/tsuki-team/tsuki/…/packages.json)
-
-Typical workflow when working on a branch:
-  tsuki config registry add https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/my-branch/pkg/packages.json
-  tsuki pkg install dht       # now fetches from your branch first
-  tsuki config registry remove <url>   # when done`,
+  2. packages.registry_urls  (managed by this command)
+  3. Built-in default        (https://raw.githubusercontent.com/s7lver2/tsuki/…/packages.json)`,
 		Example: `  tsuki config registry list
   tsuki config registry add https://raw.githubusercontent.com/you/tsuki/refs/heads/v6.0/pkg/packages.json
-  tsuki config registry remove https://raw.githubusercontent.com/you/tsuki/refs/heads/v6.0/pkg/packages.json
+  tsuki config registry remove <url>
   tsuki config registry up   <url>
   tsuki config registry down <url>
   tsuki config registry clear`,
@@ -270,13 +312,13 @@ func newRegistryListCmd() *cobra.Command {
 			}
 			fmt.Println()
 			ui.Info("First registry wins on package name collision.")
+			ui.Info("Boards and library packages share the same registry.")
 			return nil
 		},
 	}
 }
 
 func newRegistryAddCmd() *cobra.Command {
-	var prepend bool
 	cmd := &cobra.Command{
 		Use:   "add <url>",
 		Short: "Add a registry URL (prepended = highest priority by default)",
@@ -286,10 +328,6 @@ func newRegistryAddCmd() *cobra.Command {
 			c, err := config.Load()
 			if err != nil {
 				return err
-			}
-
-			if prepend {
-				// already default — just a flag for clarity
 			}
 			added := c.AddRegistry(url)
 			if !added {
@@ -304,7 +342,6 @@ func newRegistryAddCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&prepend, "prepend", true, "add as highest priority (default: true)")
 	return cmd
 }
 
@@ -339,7 +376,7 @@ func newRegistryRemoveCmd() *cobra.Command {
 func newRegistryUpCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "up <url>",
-		Short: "Raise the priority of a registry (move it earlier in the list)",
+		Short: "Raise the priority of a registry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return moveRegistry(args[0], -1)
@@ -350,7 +387,7 @@ func newRegistryUpCmd() *cobra.Command {
 func newRegistryDownCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "down <url>",
-		Short: "Lower the priority of a registry (move it later in the list)",
+		Short: "Lower the priority of a registry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return moveRegistry(args[0], +1)
@@ -399,8 +436,8 @@ func newRegistryClearCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c.RegistryURLs = []string{}
-			c.RegistryURL = ""
+			c.Packages.RegistryURLs = []string{}
+			c.Packages.RegistryURL = ""
 			if err := c.Save(); err != nil {
 				return fmt.Errorf("saving config: %w", err)
 			}
@@ -412,7 +449,6 @@ func newRegistryClearCmd() *cobra.Command {
 	return cmd
 }
 
-// printRegistryList prints the effective registry order after a mutation.
 func printRegistryList(c *config.Config) {
 	effective := c.ResolvedRegistryURLs()
 	fmt.Println()

@@ -51,18 +51,52 @@ function nowTs(): string {
 }
 
 function isPortStr(s: string): boolean {
-  const t = s.trim()
-  return t.startsWith('COM') ||
-         t.startsWith('/dev/tty') ||
-         t.startsWith('/dev/cu.')
+  return s.startsWith('COM') ||
+         s.startsWith('/dev/tty') ||
+         s.startsWith('/dev/cu.')
+}
+
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '')
 }
 
 // Strip tsukiux decorations (●, ✔, leading spaces) and ANSI escapes from a line
 function stripDecoration(line: string): string {
-  return line
-    .replace(/\x1b\[[0-9;]*m/g, '')                 // ANSI color codes
-    .replace(/^[\s●✔✖▶…·─╭╰│]+/, '')               // tsukiux prefix symbols
+  return stripAnsi(line)
+    .replace(/^[\s●✔✖▶…·─╭╰│]+/, '')
     .trim()
+}
+
+interface DetectedPortInfo {
+  port:      string   // "COM3"
+  boardId:   string   // "nano", "unknown", …
+  vidPid:    string   // "2341:0043" or "—"
+  boardName: string   // "Arduino Uno R3" or "—"
+}
+
+/**
+ * Parse one line from `tsuki-flash detect` table output.
+ * Takes ONLY fields[0] as the port — never the full padded line.
+ */
+function parseDetectLine(line: string): DetectedPortInfo | null {
+  const fields = stripAnsi(line).trim().split(/\s+/)
+  if (!fields.length) return null
+  const port = fields[0]
+  if (!isPortStr(port)) return null
+  return {
+    port,
+    boardId:   fields[1] || '—',
+    vidPid:    fields[2] || '—',
+    boardName: fields.slice(3).join(' ') || '—',
+  }
+}
+
+/** Label shown in the port dropdown (port + board name if known). */
+function portLabel(p: DetectedPortInfo): string {
+  if (p.boardName !== '—') return `${p.port}  —  ${p.boardName}`
+  if (p.boardId !== '—' && p.boardId !== 'unknown') return `${p.port}  —  ${p.boardId}`
+  if (p.vidPid  !== '—') return `${p.port}  (${p.vidPid})`
+  return p.port
 }
 
 // Parse a line for numeric values — returns label→value pairs
@@ -177,7 +211,7 @@ export default function SerialMonitor() {
   // ── Connection state ────────────────────────────────────────────────────────
   const [port,     setPort    ] = useState(settings.monitorPort || '')
   const [baud,     setBaud    ] = useState(settings.monitorBaud || '9600')
-  const [ports,    setPorts   ] = useState<string[]>([])
+  const [ports,    setPorts   ] = useState<DetectedPortInfo[]>([])
   const [running,  setRunning ] = useState(false)
   const [scanning, setScanning] = useState(false)
 
@@ -231,36 +265,69 @@ export default function SerialMonitor() {
       return
     }
     setScanning(true)
-    const found: string[] = []
+    const found: DetectedPortInfo[] = []
 
+    // ── Primary: tsuki-flash detect --json ──────────────────────────────────
+    // NDJSON output: {"port":"COM3","board_id":"uno","vid_pid":"2341:0043","board_name":"Arduino Uno R3"}
+    // Requires tsuki-flash with --json support; falls through on older binaries.
+    let jsonOk = false
     try {
-      // Primary: tsuki-flash detect (raw port names, most reliable)
-      const h1 = await spawnProcess(tsukiFlashBin, ['detect'], undefined, (line) => {
-        const p = line.trim()
-        if (isPortStr(p)) found.push(p)
+      const h = await spawnProcess(tsukiFlashBin, ['detect', '--json'], undefined, (line) => {
+        const clean = line.trim()
+        if (!clean.startsWith('{')) return
+        try {
+          const obj = JSON.parse(clean)
+          if (typeof obj.port === 'string' && isPortStr(obj.port)) {
+            found.push({
+              port:      obj.port,
+              boardId:   typeof obj.board_id   === 'string' ? obj.board_id   : '—',
+              vidPid:    typeof obj.vid_pid     === 'string' ? obj.vid_pid    : '—',
+              boardName: typeof obj.board_name  === 'string' ? obj.board_name : '—',
+            })
+            jsonOk = true
+          }
+        } catch { /* malformed — skip */ }
       })
-      await h1.done
-      h1.dispose()
+      await h.done
+      h.dispose()
     } catch { /* fall through */ }
 
-    if (!found.length) {
-      // Fallback: tsuki monitor --list (tsukiux-decorated output)
+    // ── Fallback A: tsuki-flash detect (legacy human table) ─────────────────
+    // The detect command prints a padded table, e.g.:
+    //   "  COM3                  uno              2341:0043  Arduino Uno R3"
+    //
+    // parseDetectLine() takes ONLY the first whitespace-separated token as the
+    // port, so we never store "COM3                  uno  …" as the port name.
+    if (!found.length && !jsonOk) {
       try {
-        const h2 = await spawnProcess(tsukiPath, ['monitor', '--list'], undefined, (line) => {
-          const p = stripDecoration(line)
-          if (isPortStr(p)) found.push(p)
+        const h1 = await spawnProcess(tsukiFlashBin, ['detect'], undefined, (line) => {
+          const p = parseDetectLine(line)
+          if (p) found.push(p)
         })
-        await h2.done
-        h2.dispose()
+        await h1.done
+        h1.dispose()
       } catch { /* fall through */ }
     }
 
-    // Deduplicate preserving order
-    const seen = new Set<string>()
-    const unique = found.filter(p => { if (seen.has(p)) return false; seen.add(p); return true })
+    // ── Fallback B: tsuki monitor --list ────────────────────────────────────
+    if (!found.length) {
+      try {
+        const h2 = await spawnProcess(tsukiPath, ['monitor', '--list'], undefined, (line) => {
+          const fields = stripDecoration(line).split(/\s+/)
+          const p = fields[0] || ''
+          if (isPortStr(p)) found.push({ port: p, boardId: '—', vidPid: '—', boardName: '—' })
+        })
+        await h2.done
+        h2.dispose()
+      } catch { /* give up */ }
+    }
+
+    // Deduplicate by port string, preserving order
+    const seen   = new Set<string>()
+    const unique = found.filter(p => { if (seen.has(p.port)) return false; seen.add(p.port); return true })
 
     setPorts(unique)
-    if (unique.length > 0 && !port) setPort(unique[0])
+    if (unique.length > 0 && !port) setPort(unique[0].port)
     if (unique.length === 0) push('⚠ No serial ports found — connect a board and try again', 'sys')
     setScanning(false)
   }, [tsukiFlashBin, tsukiPath, port]) // eslint-disable-line
@@ -383,10 +450,10 @@ export default function SerialMonitor() {
               onChange={e => setPort(e.target.value)}
               disabled={running}
               className="text-[11px] bg-[var(--surface-3)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[var(--fg)] outline-none cursor-pointer disabled:opacity-50"
-              style={{ maxWidth: 110 }}
+              style={{ maxWidth: 220 }}
             >
               <option value="">— pick —</option>
-              {ports.map(p => <option key={p} value={p}>{p}</option>)}
+              {ports.map(p => <option key={p.port} value={p.port}>{portLabel(p)}</option>)}
             </select>
           )}
           <input

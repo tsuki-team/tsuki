@@ -1,0 +1,16 @@
+[board]
+id          = "esp8266"
+name        = "ESP8266 Generic"
+fqbn        = "esp8266:esp8266:generic"
+variant     = "esp8266"
+flash_kb    = 1024
+ram_kb      = 80
+description = "ESP8266 Generic — Xtensa LX106, WiFi, 1MB flash"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "esp8266"
+
+[defines]
+values = ["ARDUINO_ESP8266_GENERIC", "ARDUINO_ARCH_ESP8266", "ESP8266"]

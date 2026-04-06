@@ -1,0 +1,16 @@
+[board]
+id             = "uno"
+name           = "Arduino Uno"
+version        = "1.0.0"
+fqbn           = "arduino:avr:uno"
+variant        = "standard"
+flash_kb       = 32
+ram_kb         = 2
+toolchain_type = "avr"
+defines        = "ARDUINO_AVR_UNO,ARDUINO_ARCH_AVR"
+
+[avr]
+mcu        = "atmega328p"
+f_cpu      = 16000000
+programmer = "arduino"
+baud       = 115200

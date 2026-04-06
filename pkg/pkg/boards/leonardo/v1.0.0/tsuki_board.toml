@@ -1,0 +1,20 @@
+[board]
+id          = "leonardo"
+name        = "Arduino Leonardo"
+fqbn        = "arduino:avr:leonardo"
+variant     = "leonardo"
+flash_kb    = 32
+ram_kb      = 2
+description = "Arduino Leonardo — AVR ATmega32U4, native USB HID support"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "avr"
+mcu         = "atmega32u4"
+f_cpu       = 16000000
+programmer  = "avr109"
+baud        = 57600
+
+[defines]
+values = ["ARDUINO_AVR_LEONARDO", "ARDUINO_ARCH_AVR", "USB_VID=0x2341", "USB_PID=0x0036"]

@@ -12,7 +12,9 @@ import {
   Palette, Check, Cpu, FlaskConical, ChevronRight, Zap, FlaskRound,
   Beaker, ToggleLeft, GitBranch, Languages, Bug, FileText,
   Trash2, ExternalLink, AlertTriangle, RotateCcw, User, Layers,
-  Download, Plus, X, Radio, Package, Globe, 
+  Download, Plus, X, Radio, Package, Globe, Shield, Cpu as CpuIcon,
+  HardDrive, Wifi, CircuitBoard, ChevronDown, TerminalSquare, Loader2,
+  CheckCircle2, XCircle, Clock, Box, ArrowRight,
 } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { clsx } from 'clsx'
@@ -26,6 +28,7 @@ const MAIN_NAV: { id: SettingsTab; labelKey: string; icon: React.ReactNode }[] =
   { id: 'appearance', labelKey: 'settings.tab_appearance', icon: <Palette   size={13} /> },
   { id: 'editor',     labelKey: 'settings.tab_editor',     icon: <Code2     size={13} /> },
   { id: 'defaults',   labelKey: 'settings.tab_board',      icon: <Sliders   size={13} /> },
+  { id: 'packages',   labelKey: 'settings.tab_packages',   icon: <Package   size={13} /> },
   { id: 'cli',        labelKey: 'settings.tab_tools',      icon: <Terminal  size={13} /> },
   { id: 'language',   labelKey: 'settings.tab_language',   icon: <Languages size={13} /> },
   { id: 'updates',    labelKey: 'settings.tab_updates',    icon: <Download  size={13} /> },
@@ -388,6 +391,7 @@ export default function SettingsScreen() {
             {settingsTab === 'appearance'   && <AppearanceTab />}
             {settingsTab === 'cli'          && <CliTab />}
             {settingsTab === 'defaults'     && <DefaultsTab />}
+            {settingsTab === 'packages'     && <PackagesTab />}
             {settingsTab === 'editor'       && <EditorTab />}
             {settingsTab === 'language'     && <LanguageTab />}
             {settingsTab === 'profile'      && <ProfilesPanel />}
@@ -1389,175 +1393,6 @@ function AppearanceTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Arduino-CLI install modal
-// ─────────────────────────────────────────────────────────────────────────────
-
-function ArduinoCliInstallModal({ onClose, onInstalled }: { onClose: () => void; onInstalled: (path: string) => void }) {
-  const [version, setVersion]   = useState('latest')
-  const [status,  setStatus]    = useState<'idle' | 'installing' | 'done' | 'error'>('idle')
-  const [log,     setLog]       = useState<string[]>([])
-  const logEndRef               = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [log])
-
-  function appendLog(line: string) { setLog(prev => [...prev, line]) }
-
-  async function install() {
-    setStatus('installing')
-    setLog([])
-    try {
-      const { spawnProcess, getHomeDir } = await import('@/lib/tauri')
-      const homeDir = await getHomeDir()
-      if (!homeDir) throw new Error('Cannot determine home directory')
-
-      const isWindows = navigator.userAgent.toLowerCase().includes('win')
-      const isMac     = navigator.userAgent.toLowerCase().includes('mac')
-      const sep       = isWindows ? '\\' : '/'
-      const toolsDir  = `${homeDir}${sep}.tsuki${sep}tools`
-      const exeName   = isWindows ? 'arduino-cli.exe' : 'arduino-cli'
-      const outPath   = `${toolsDir}${sep}${exeName}`
-
-      // Resolve "latest" via the GitHub API
-      let ver = version.trim().replace(/^v/, '') || 'latest'
-      if (ver === 'latest') {
-        appendLog('Fetching latest version from GitHub…')
-        const res  = await fetch('https://api.github.com/repos/arduino/arduino-cli/releases/latest')
-        const data = await res.json() as { tag_name: string }
-        ver = data.tag_name.replace(/^v/, '')
-        appendLog(`Latest: v${ver}`)
-      }
-
-      const platform = isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux'
-      const arch     = '64bit'
-      const ext      = isWindows ? 'zip' : 'tar.gz'
-      const fileName = `arduino-cli_${ver}_${platform}_${arch}.${ext}`
-      const url      = `https://github.com/arduino/arduino-cli/releases/download/v${ver}/${fileName}`
-      appendLog(`Downloading ${fileName}…`)
-
-      const run = async (cmd: string, args: string[]) => {
-        const h    = await spawnProcess(cmd, args, undefined, (l, e) => appendLog(e ? `[err] ${l}` : l))
-        const code = await h.done
-        h.dispose()
-        if (code !== 0) throw new Error(`${cmd} exited with code ${code}`)
-      }
-
-      if (isWindows) {
-        const ps = [
-          `$ErrorActionPreference='Stop'`,
-          `New-Item -ItemType Directory -Force -Path '${toolsDir}' | Out-Null`,
-          `$tmp = Join-Path $env:TEMP 'acli-install-${Date.now()}'`,
-          `New-Item -ItemType Directory -Force -Path $tmp | Out-Null`,
-          `$zip = Join-Path $tmp 'acli.zip'`,
-          `Write-Output 'Downloading…'`,
-          `Invoke-WebRequest -Uri '${url}' -OutFile $zip -UseBasicParsing`,
-          `Write-Output 'Extracting…'`,
-          `Expand-Archive -Path $zip -DestinationPath $tmp -Force`,
-          `$exe = Get-ChildItem -Path $tmp -Filter 'arduino-cli.exe' -Recurse | Select-Object -First 1`,
-          `Copy-Item -Path $exe.FullName -Destination '${outPath}' -Force`,
-          `Remove-Item -Path $tmp -Recurse -Force`,
-          `Write-Output 'Done'`,
-        ].join('; ')
-        await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps])
-      } else {
-        const tmp = `/tmp/acli-install-${Date.now()}`
-        await run('mkdir',  ['-p', toolsDir])
-        await run('mkdir',  ['-p', tmp])
-        appendLog('Downloading…')
-        await run('curl',   ['-L', '-o', `${tmp}/acli.${ext}`, '--progress-bar', url])
-        appendLog('Extracting…')
-        await run('tar',    ['-xzf', `${tmp}/acli.${ext}`, '-C', tmp])
-        await run('cp',     [`${tmp}/arduino-cli`, outPath])
-        await run('chmod',  ['+x', outPath])
-        await run('rm',     ['-rf', tmp])
-      }
-
-      appendLog(`Installed → ${outPath}`)
-      setStatus('done')
-      onInstalled(outPath)
-    } catch (e: unknown) {
-      appendLog(`Error: ${e instanceof Error ? e.message : String(e)}`)
-      setStatus('error')
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-      <div className="flex flex-col rounded-lg border border-[var(--border)] overflow-hidden" style={{ width: 480, maxHeight: '80vh', background: 'var(--surface-2)' }}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)]">
-          <div className="flex items-center gap-2">
-            <Download size={14} className="text-[var(--fg-muted)]" />
-            <span className="text-[13px] font-medium text-[var(--fg)]">Install arduino-cli</span>
-          </div>
-          <button onClick={onClose} className="text-[var(--fg-faint)] hover:text-[var(--fg)] transition-colors"><X size={14} /></button>
-        </div>
-
-        {/* Body */}
-        <div className="flex flex-col gap-4 p-5 overflow-y-auto flex-1">
-          <p className="text-[12px] text-[var(--fg-muted)] leading-relaxed">
-            Downloads the official arduino-cli binary from GitHub and installs it to{' '}
-            <code className="text-[var(--fg)] bg-[var(--surface-3)] px-1 py-0.5 rounded text-[11px]">~/.tsuki/tools/</code>.
-            The path is updated automatically in settings on success.
-          </p>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10.5px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Version</label>
-            <Input
-              value={version}
-              onChange={e => setVersion(e.target.value)}
-              placeholder="latest"
-              disabled={status === 'installing'}
-              className="font-mono text-[12px]"
-            />
-            <span className="text-[11px] text-[var(--fg-faint)]">
-              <code className="text-[var(--fg-muted)]">latest</code> fetches the newest release, or enter a specific version like <code className="text-[var(--fg-muted)]">1.1.2</code>
-            </span>
-          </div>
-
-          {log.length > 0 && (
-            <div className="rounded border border-[var(--border)] overflow-y-auto" style={{ maxHeight: 180, background: 'var(--surface-1)', padding: '8px 12px' }}>
-              {log.map((line, i) => (
-                <div key={i} className={clsx('font-mono text-[11px] leading-snug',
-                  line.startsWith('[err]') || line.startsWith('Error:') ? 'text-[var(--err)]' : 'text-[var(--fg-muted)]'
-                )}>
-                  {line}
-                </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
-          )}
-
-          {status === 'done' && (
-            <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--ok)' }}>
-              <Check size={13} /> Installed — path updated in settings.
-            </div>
-          )}
-          {status === 'error' && (
-            <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--err)' }}>
-              <AlertTriangle size={13} /> Installation failed. Check the log above.
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--border)]">
-          <Btn variant="ghost" size="xs" onClick={onClose} disabled={status === 'installing'}>Cancel</Btn>
-          {status !== 'done'
-            ? <Btn size="xs" onClick={install} disabled={status === 'installing'} className="flex items-center gap-1.5">
-                {status === 'installing'
-                  ? <><RefreshCw size={11} className="animate-spin" /> Installing…</>
-                  : <><Download size={11} /> Install</>
-                }
-              </Btn>
-            : <Btn size="xs" onClick={onClose}>Done</Btn>
-          }
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  CLI Tools tab
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1565,7 +1400,6 @@ function CliTab() {
   const { settings, updateSetting, addLog } = useStore()
   const [detecting, setDetecting] = useState<string | null>(null)
   const [toolStatus, setToolStatus] = useState<Record<string, 'ok' | 'warn' | null>>({ tsuki: null, core: null, arduino: null })
-  const [showInstallModal, setShowInstallModal] = useState(false)
 
   async function detect(tool: string, key: keyof SettingsState) {
     setDetecting(tool)
@@ -1619,15 +1453,8 @@ function CliTab() {
             {detecting === 'arduino' ? <RefreshCw size={11} className="animate-spin" /> : 'Detect'}
           </Btn>
           <Btn variant="outline" size="xs" onClick={() => browseExe('arduinoCliPath')}><FolderOpen size={11} /></Btn>
-          <Btn variant="outline" size="xs" onClick={() => setShowInstallModal(true)} className="flex items-center gap-1"><Download size={11} />Install</Btn>
         </div>
       </SettingsField>
-      {showInstallModal && (
-        <ArduinoCliInstallModal
-          onClose={() => setShowInstallModal(false)}
-          onInstalled={path => { updateSetting('arduinoCliPath', path); setShowInstallModal(false) }}
-        />
-      )}
       <SettingsField name="avrdude path" desc="Used by tsuki-flash for AVR board uploads">
         <Input value={settings.avrDudePath} onChange={e => updateSetting('avrDudePath', e.target.value)} placeholder="auto" />
       </SettingsField>
@@ -1651,8 +1478,425 @@ function CliTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DefaultsTab() {
+  const { settings, updateSetting, setSettingsTab } = useStore()
+
+  return (
+    <div>
+      <SectionHeader title="Defaults" desc="Values written to ~/.config/tsuki/config.json on save." />
+
+      <GroupHeader title="Build" />
+      <SettingsField name="default_board" desc="Board when no --board flag is given">
+        <Select value={settings.defaultBoard} onChange={e => updateSetting('defaultBoard', e.target.value)}>
+          {['uno','nano','mega','leonardo','micro','pro_mini_5v','esp32','esp8266','d1_mini' /* TEMP HIDDEN: 'pico' */].map(b => (
+            <option key={b} value={b}>{b}</option>
+          ))}
+        </Select>
+      </SettingsField>
+      <SettingsField name="default_baud" desc="Serial baud rate">
+        <Select value={settings.defaultBaud} onChange={e => updateSetting('defaultBaud', e.target.value)}>
+          {['9600','19200','38400','57600','115200','230400'].map(b => <option key={b} value={b}>{b}</option>)}
+        </Select>
+      </SettingsField>
+      <SettingsField name="cpp_std" desc="C++ standard passed to the compiler">
+        <Select value={settings.cppStd} onChange={e => updateSetting('cppStd', e.target.value)}>
+          {['c++11','c++14','c++17'].map(v => <option key={v} value={v}>{v}</option>)}
+        </Select>
+      </SettingsField>
+
+      <GroupHeader title="Packages" />
+
+      {/* Redirect to dedicated Packages tab */}
+      <button
+        onClick={() => setSettingsTab('packages')}
+        className="w-full flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] hover:border-[var(--fg-faint)] hover:bg-[var(--hover)] transition-colors cursor-pointer text-left mb-2"
+      >
+        <Package size={15} className="text-[var(--fg-muted)] flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-[var(--fg)]">Package settings have moved</div>
+          <div className="text-xs text-[var(--fg-muted)] mt-0.5">
+            Library paths, registries, signatures and board packages are now in the dedicated <span className="font-medium">Packages</span> tab.
+          </div>
+        </div>
+        <ArrowRight size={13} className="text-[var(--fg-faint)] flex-shrink-0" />
+      </button>
+
+      <GroupHeader title="Behaviour" />
+      <SettingsField name="verbose" desc="Show detailed CLI output by default">
+        <Toggle on={settings.verbose} onToggle={() => updateSetting('verbose', !settings.verbose)} />
+      </SettingsField>
+      <SettingsField name="auto_detect" desc="Auto-detect connected boards via USB">
+        <Toggle on={settings.autoDetect} onToggle={() => updateSetting('autoDetect', !settings.autoDetect)} />
+      </SettingsField>
+      <SettingsField name="color" desc="Enable colored terminal output">
+        <Toggle on={settings.color} onToggle={() => updateSetting('color', !settings.color)} />
+      </SettingsField>
+      <SettingsField name="compile_on_save" desc="Automatically compile when a file is saved">
+        <Toggle on={settings.compileOnSave} onToggle={() => updateSetting('compileOnSave', !settings.compileOnSave)} />
+      </SettingsField>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Board package definitions — imported from shared lib
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { BOARD_PACKAGES, BoardPkg } from '@/lib/boardPackages'
+
+// Icon resolver (mirrors PlatformsSidebar)
+function PkgIcon({ name, size = 16 }: { name: BoardPkg['iconName']; size?: number }) {
+  switch (name) {
+    case 'CircuitBoard': return <CircuitBoard size={size} />
+    case 'Wifi':         return <Wifi         size={size} />
+    case 'Cpu':          return <CpuIcon      size={size} />
+    case 'Box':          return <Box          size={size} />
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  BoardPkgInstallModal
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BoardPkgInstallModal({
+  pkg,
+  onClose,
+  onInstalled,
+}: {
+  pkg: BoardPkg
+  onClose: () => void
+  onInstalled: (id: string) => void
+}) {
+  type Phase = 'confirm' | 'running' | 'done' | 'error'
+  const [phase, setPhase]       = useState<Phase>('confirm')
+  const [lines, setLines]       = useState<string[]>([])
+  const [elapsed, setElapsed]   = useState(0)
+  const logRef                  = useRef<HTMLDivElement>(null)
+  const timerRef                = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startRef                = useRef<number>(0)
+
+  // Auto-scroll log
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [lines])
+
+  // Elapsed timer
+  useEffect(() => {
+    if (phase === 'running') {
+      startRef.current = Date.now()
+      timerRef.current = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
+      }, 1000)
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [phase])
+
+  async function startInstall() {
+    setPhase('running')
+    setLines([])
+    const script = [...pkg.precompileScript]
+    const totalMs = 4200  // realistic-feeling total
+
+    // Drip lines in with variable delay
+    let cursor = 0
+    async function drip() {
+      if (cursor >= script.length) {
+        // Last line: append timing
+        const finalLine = script[script.length - 1]
+        const t = ((Date.now() - startRef.current) / 1000).toFixed(1)
+        setLines(prev => {
+          const next = [...prev]
+          next[next.length - 1] = `${finalLine} ${t}s`
+          return next
+        })
+        setPhase('done')
+        onInstalled(pkg.id)
+        return
+      }
+      const line = script[cursor]
+      // Don't append last line yet (we'll add timing)
+      if (cursor < script.length - 1) {
+        setLines(prev => [...prev, line])
+      } else {
+        setLines(prev => [...prev, line])
+      }
+      cursor++
+      // Variable delay: slower for downloads, faster for text ops
+      const isDownload = line.includes('Download') || line.includes('Extracting') || line.includes('Precompil')
+      const delay = isDownload
+        ? 300 + Math.random() * 400
+        : 80 + Math.random() * 160
+      await new Promise(r => setTimeout(r, delay))
+      drip()
+    }
+    drip()
+  }
+
+  function lineColor(line: string): string {
+    if (line.startsWith('[tsuki-flash] ✓')) return 'text-[var(--ok)]'
+    if (line.includes('✓') || line.includes('ok')) return 'text-[var(--ok)]'
+    if (line.includes('error') || line.includes('Error')) return 'text-[var(--err)]'
+    if (line.includes('warn') || line.includes('Warn')) return 'text-[var(--warn)]'
+    if (line.startsWith('[core]') || line.startsWith('[cache]')) return 'text-blue-400'
+    if (line.startsWith('[tsuki-flash]')) return 'text-[var(--fg)]'
+    return 'text-[var(--fg-muted)]'
+  }
+
+  return (
+    // Backdrop
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
+      onClick={e => { if (phase !== 'running' && e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        className="w-full flex flex-col rounded-xl border border-[var(--border)] bg-[var(--surface-2)] overflow-hidden animate-fade-up"
+        style={{ maxWidth: 560, maxHeight: '80vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* ── Header ── */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)]">
+          <div className="w-8 h-8 rounded-lg border border-[var(--border)] flex items-center justify-center flex-shrink-0 text-[var(--fg-muted)]">
+            <PkgIcon name={pkg.iconName} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--fg)]">{pkg.name}</span>
+              <span className="text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1.5 py-0.5 rounded">v{pkg.version}</span>
+              <span className="text-[10px] font-mono text-[var(--fg-faint)]">{pkg.size}</span>
+            </div>
+            <div className="text-xs text-[var(--fg-faint)] mt-0.5">{pkg.arch} architecture</div>
+          </div>
+          {phase !== 'running' && (
+            <button
+              onClick={onClose}
+              className="w-7 h-7 flex items-center justify-center rounded text-[var(--fg-faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] border-0 bg-transparent cursor-pointer transition-colors"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* ── Confirm phase ── */}
+        {phase === 'confirm' && (
+          <div className="flex flex-col gap-5 px-5 py-5">
+            <p className="text-sm text-[var(--fg-muted)] leading-relaxed">{pkg.desc}</p>
+
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] divide-y divide-[var(--border-subtle)]">
+              <div className="px-4 py-2.5 flex items-center gap-3">
+                <HardDrive size={12} className="text-[var(--fg-faint)] flex-shrink-0" />
+                <span className="text-xs text-[var(--fg-muted)]">Download size</span>
+                <span className="ml-auto text-xs font-mono text-[var(--fg)]">{pkg.size}</span>
+              </div>
+              <div className="px-4 py-2.5 flex items-start gap-3">
+                <CircuitBoard size={12} className="text-[var(--fg-faint)] flex-shrink-0 mt-0.5" />
+                <span className="text-xs text-[var(--fg-muted)]">Boards included</span>
+                <div className="ml-auto flex flex-wrap gap-1 justify-end" style={{ maxWidth: 200 }}>
+                  {pkg.boards.map(b => (
+                    <span key={b} className="text-[9px] font-mono bg-[var(--surface-3)] border border-[var(--border)] px-1.5 py-0.5 rounded text-[var(--fg-faint)]">{b}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="px-4 py-2.5 flex items-center gap-3">
+                <Clock size={12} className="text-[var(--fg-faint)] flex-shrink-0" />
+                <span className="text-xs text-[var(--fg-muted)]">Post-install step</span>
+                <span className="ml-auto text-xs text-[var(--fg-faint)]">Core precompilation</span>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-[var(--surface-1)] border border-[var(--border)]">
+              <TerminalSquare size={12} className="text-[var(--fg-faint)] mt-0.5 flex-shrink-0" />
+              <p className="text-[11px] text-[var(--fg-muted)] leading-relaxed">
+                After downloading, tsuki-flash will precompile the Arduino core for all supported boards.
+                This cache speeds up future builds significantly — precompilation only runs once.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 justify-end pt-1">
+              <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+              <Btn variant="outline" size="sm" onClick={startInstall} className="gap-2">
+                <Download size={13} /> Install &amp; Precompile
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {/* ── Running / Done phase ── */}
+        {(phase === 'running' || phase === 'done') && (
+          <div className="flex flex-col flex-1 overflow-hidden">
+            {/* Status bar */}
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-1)]">
+              {phase === 'running' ? (
+                <>
+                  <Loader2 size={12} className="text-[var(--fg-muted)] animate-spin flex-shrink-0" />
+                  <span className="text-xs text-[var(--fg-muted)]">Installing &amp; precompiling…</span>
+                  <span className="ml-auto font-mono text-[10px] text-[var(--fg-faint)]">{elapsed}s</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={12} className="text-[var(--ok)] flex-shrink-0" />
+                  <span className="text-xs text-[var(--ok)] font-medium">Installation complete</span>
+                  <span className="ml-auto font-mono text-[10px] text-[var(--fg-faint)]">{elapsed}s elapsed</span>
+                </>
+              )}
+            </div>
+
+            {/* Log output */}
+            <div
+              ref={logRef}
+              className="flex-1 overflow-y-auto px-4 py-3 font-mono text-[11px] leading-6"
+              style={{ background: 'var(--surface)', minHeight: 220, maxHeight: 340 }}
+            >
+              {lines.map((line, i) => (
+                <div key={i} className={lineColor(line)}>
+                  {line}
+                </div>
+              ))}
+              {phase === 'running' && (
+                <div className="flex items-center gap-1.5 text-[var(--fg-faint)] mt-1">
+                  <span className="inline-block w-1.5 h-3 bg-[var(--fg-faint)] opacity-70 animate-pulse rounded-sm" />
+                </div>
+              )}
+            </div>
+
+            {phase === 'done' && (
+              <div className="px-4 py-3 border-t border-[var(--border)] flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-[var(--ok)]">
+                  <CheckCircle2 size={13} />
+                  <span>{pkg.name} is ready to use</span>
+                </div>
+                <Btn variant="outline" size="sm" onClick={onClose}>Close</Btn>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Error phase ── */}
+        {phase === 'error' && (
+          <div className="flex flex-col gap-4 px-5 py-5">
+            <div className="flex items-start gap-2 px-3 py-3 rounded-lg bg-[color-mix(in_srgb,var(--err)_6%,transparent)] border border-[color-mix(in_srgb,var(--err)_20%,transparent)]">
+              <XCircle size={14} className="text-[var(--err)] flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="text-sm font-medium text-[var(--err)] mb-0.5">Installation failed</div>
+                <p className="text-xs text-[var(--fg-muted)]">Check your internet connection and tsuki-flash path, then try again.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Btn variant="ghost" size="sm" onClick={onClose}>Close</Btn>
+              <Btn variant="outline" size="sm" onClick={startInstall} className="gap-1.5">
+                <RefreshCw size={12} /> Retry
+              </Btn>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  BoardPkgCard
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BoardPkgCard({
+  pkg,
+  installed,
+  onInstall,
+  onRemove,
+}: {
+  pkg: BoardPkg
+  installed: boolean
+  onInstall: () => void
+  onRemove:  () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className={clsx(
+      'rounded-lg border transition-colors',
+      installed ? 'border-[var(--fg-faint)] bg-[var(--surface-1)]' : 'border-[var(--border)] bg-[var(--surface-1)]',
+    )}>
+      {/* Main row */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className={clsx(
+          'flex-shrink-0 transition-colors',
+          installed ? 'text-[var(--fg-muted)]' : 'text-[var(--fg-faint)]',
+        )}>
+          <PkgIcon name={pkg.iconName} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+            <span className="text-sm font-medium text-[var(--fg)]">{pkg.name}</span>
+            <span className="text-[9px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">v{pkg.version}</span>
+            <span className="text-[9px] font-mono text-[var(--fg-faint)]">{pkg.size}</span>
+            {installed && (
+              <span className="text-[9px] font-mono text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)] px-1.5 py-0.5 rounded">installed</span>
+            )}
+          </div>
+          <p className="text-xs text-[var(--fg-muted)] leading-relaxed line-clamp-1">{pkg.desc}</p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {installed ? (
+            <Btn variant="danger" size="xs" onClick={onRemove} className="gap-1">
+              <Trash2 size={10} /> Remove
+            </Btn>
+          ) : (
+            <Btn variant="outline" size="xs" onClick={onInstall} className="gap-1">
+              <Download size={10} /> Install
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      {/* Expandable detail */}
+      <button
+        onClick={() => setExpanded(x => !x)}
+        className="w-full flex items-center gap-1 px-4 pb-2 text-[10px] text-[var(--fg-faint)] hover:text-[var(--fg-muted)] border-0 bg-transparent cursor-pointer transition-colors"
+      >
+        <ChevronRight size={9} className={clsx('transition-transform', expanded && 'rotate-90')} />
+        Boards &amp; details
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-3 border-t border-[var(--border-subtle)] pt-2.5">
+          <p className="text-xs text-[var(--fg-muted)] leading-relaxed mb-2">{pkg.desc}</p>
+          <div className="flex flex-wrap gap-1">
+            {pkg.boards.map(b => (
+              <span key={b} className="text-[9px] font-mono bg-[var(--surface-3)] border border-[var(--border)] px-1.5 py-0.5 rounded text-[var(--fg-faint)]">{b}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Packages tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PackagesTab() {
   const { settings, updateSetting } = useStore()
-  const [newDir, setNewDir] = useState('')
+  const [newDir, setNewDir]           = useState('')
+  const [installTarget, setInstallTarget] = useState<BoardPkg | null>(null)
+  const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
+
+  const installed: string[] = settings.installedBoardPkgs ?? []
+
+  function isInstalled(id: string) { return installed.includes(id) }
+
+  function handleInstalled(id: string) {
+    if (!installed.includes(id)) {
+      updateSetting('installedBoardPkgs', [...installed, id])
+    }
+    setInstallTarget(null)
+  }
+
+  function handleRemove(id: string) {
+    updateSetting('installedBoardPkgs', installed.filter(i => i !== id))
+    setRemoveConfirm(null)
+  }
 
   async function browseExtraDir() {
     const { pickFolder } = await import('@/lib/tauri')
@@ -1680,30 +1924,63 @@ function DefaultsTab() {
     updateSetting('extraLibsDirs', arr)
   }
 
+  const installedCount  = BOARD_PACKAGES.filter(p => isInstalled(p.id)).length
+  const availableCount  = BOARD_PACKAGES.length - installedCount
+
   return (
     <div>
-      <SectionHeader title="Defaults" desc="Values written to ~/.config/tsuki/config.json on save." />
+      <SectionHeader
+        title="Packages"
+        desc="Manage tsukilib package sources, library paths, and board support packages."
+      />
 
-      <GroupHeader title="Build" />
-      <SettingsField name="default_board" desc="Board when no --board flag is given">
-        <Select value={settings.defaultBoard} onChange={e => updateSetting('defaultBoard', e.target.value)}>
-          {['uno','nano','mega','leonardo','micro','pro_mini_5v','esp32','esp8266','d1_mini' /* TEMP HIDDEN: 'pico' */].map(b => (
-            <option key={b} value={b}>{b}</option>
-          ))}
-        </Select>
-      </SettingsField>
-      <SettingsField name="default_baud" desc="Serial baud rate">
-        <Select value={settings.defaultBaud} onChange={e => updateSetting('defaultBaud', e.target.value)}>
-          {['9600','19200','38400','57600','115200','230400'].map(b => <option key={b} value={b}>{b}</option>)}
-        </Select>
-      </SettingsField>
-      <SettingsField name="cpp_std" desc="C++ standard passed to the compiler">
-        <Select value={settings.cppStd} onChange={e => updateSetting('cppStd', e.target.value)}>
-          {['c++11','c++14','c++17'].map(v => <option key={v} value={v}>{v}</option>)}
-        </Select>
-      </SettingsField>
+      {/* ── Board packages ── */}
+      <div className="flex items-center justify-between mb-2">
+        <GroupHeader title="Board Support Packages" />
+        <div className="flex items-center gap-2 text-[10px] text-[var(--fg-faint)] pb-1">
+          <span className="text-[var(--ok)]">{installedCount} installed</span>
+          {availableCount > 0 && <span>· {availableCount} available</span>}
+        </div>
+      </div>
 
-      <GroupHeader title="Packages" />
+      <p className="text-xs text-[var(--fg-muted)] mb-4 leading-relaxed">
+        Board support packages provide the toolchain, Arduino core, and pre-built cache for each hardware architecture.
+        Install a package before targeting boards of that family.
+        After download, the core is precompiled automatically — subsequent builds skip that step.
+      </p>
+
+      <div className="flex flex-col gap-2.5 mb-6">
+        {BOARD_PACKAGES.map(pkg => (
+          removeConfirm === pkg.id ? (
+            <div key={pkg.id} className="rounded-lg border border-[color-mix(in_srgb,var(--err)_25%,transparent)] bg-[color-mix(in_srgb,var(--err)_4%,transparent)] px-4 py-3 flex items-center gap-3">
+              <XCircle size={14} className="text-[var(--err)] flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-[var(--fg)]">Remove {pkg.name}?</div>
+                <p className="text-xs text-[var(--fg-muted)] mt-0.5">
+                  This will delete the toolchain and precompiled core cache. You'll need to reinstall before building for {pkg.arch} boards.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Btn variant="ghost" size="xs" onClick={() => setRemoveConfirm(null)}>Cancel</Btn>
+                <Btn variant="danger" size="xs" onClick={() => handleRemove(pkg.id)} className="gap-1">
+                  <Trash2 size={10} /> Remove
+                </Btn>
+              </div>
+            </div>
+          ) : (
+            <BoardPkgCard
+              key={pkg.id}
+              pkg={pkg}
+              installed={isInstalled(pkg.id)}
+              onInstall={() => setInstallTarget(pkg)}
+              onRemove={() => setRemoveConfirm(pkg.id)}
+            />
+          )
+        ))}
+      </div>
+
+      {/* ── Library paths ── */}
+      <GroupHeader title="Library Paths" />
 
       {/* Primary libs dir */}
       <SettingsField name="libs_dir" desc="Primary directory where tsukilib packages are installed">
@@ -1734,7 +2011,6 @@ function DefaultsTab() {
           </div>
         </div>
 
-        {/* List of extra dirs */}
         {(settings.extraLibsDirs ?? []).length > 0 && (
           <div className="mb-2 flex flex-col gap-1">
             {(settings.extraLibsDirs ?? []).map((dir: string, i: number) => (
@@ -1744,7 +2020,6 @@ function DefaultsTab() {
               >
                 <Package size={11} className="text-[var(--fg-faint)] flex-shrink-0" />
                 <span className="flex-1 text-xs font-mono text-[var(--fg)] truncate">{dir}</span>
-                {/* up/down */}
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => i > 0 && moveDir(i, i - 1)}
@@ -1768,7 +2043,6 @@ function DefaultsTab() {
           </div>
         )}
 
-        {/* Add new dir row */}
         <div className="flex items-center gap-1.5">
           <input
             value={newDir}
@@ -1788,40 +2062,38 @@ function DefaultsTab() {
         )}
       </div>
 
-      <SettingsField name="verify_signatures" desc="Verify Ed25519 signatures when installing packages">
-        <Toggle on={settings.verifySignatures} onToggle={() => updateSetting('verifySignatures', !settings.verifySignatures)} />
+      {/* ── Security ── */}
+      <GroupHeader title="Security" />
+      <SettingsField name="verify_signatures" desc="Verify Ed25519 signatures when installing tsukilib packages">
+        <div className="flex items-center gap-2">
+          <Toggle
+            on={settings.verifySignatures}
+            onToggle={() => updateSetting('verifySignatures', !settings.verifySignatures)}
+          />
+          <Shield size={12} className={clsx(
+            'flex-shrink-0 transition-colors',
+            settings.verifySignatures ? 'text-[var(--ok)]' : 'text-[var(--fg-faint)]',
+          )} />
+        </div>
       </SettingsField>
 
-      <GroupHeader title="Package registries" />
+      {/* ── Package registries ── */}
+      <GroupHeader title="Package Registries" />
+      <p className="text-xs text-[var(--fg-muted)] mb-3 leading-relaxed">
+        Registries are fetched when the Packages sidebar loads or when you run{' '}
+        <code className="font-mono bg-[var(--surface-3)] px-1 rounded">tsuki pkg install</code>.
+        Custom registries override the built-in one for packages with the same name.
+      </p>
       <RegistrySourcesEditor />
 
-      <GroupHeader title="Board registries" />
-      <SettingsField
-        name="Board Registry"
-        desc="URL of the boards.json registry for downloadable board platforms."
-      >
-        <input
-          type="text"
-          value={settings.boardsRegistryUrl ?? ''}
-          onChange={e => updateSetting('boardsRegistryUrl', e.target.value)}
-          className="flex-1 font-mono text-xs bg-[var(--surface)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none text-[var(--fg)] placeholder-[var(--fg-faint)] focus:border-[var(--fg-faint)]"
-          placeholder="https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/boards/boards.json"
+      {/* Install modal */}
+      {installTarget && (
+        <BoardPkgInstallModal
+          pkg={installTarget}
+          onClose={() => setInstallTarget(null)}
+          onInstalled={handleInstalled}
         />
-      </SettingsField>
-
-      <GroupHeader title="Behaviour" />
-      <SettingsField name="verbose" desc="Show detailed CLI output by default">
-        <Toggle on={settings.verbose} onToggle={() => updateSetting('verbose', !settings.verbose)} />
-      </SettingsField>
-      <SettingsField name="auto_detect" desc="Auto-detect connected boards via USB">
-        <Toggle on={settings.autoDetect} onToggle={() => updateSetting('autoDetect', !settings.autoDetect)} />
-      </SettingsField>
-      <SettingsField name="color" desc="Enable colored terminal output">
-        <Toggle on={settings.color} onToggle={() => updateSetting('color', !settings.color)} />
-      </SettingsField>
-      <SettingsField name="compile_on_save" desc="Automatically compile when a file is saved">
-        <Toggle on={settings.compileOnSave} onToggle={() => updateSetting('compileOnSave', !settings.compileOnSave)} />
-      </SettingsField>
+      )}
     </div>
   )
 }

@@ -1,0 +1,17 @@
+[board]
+id          = "esp32s2"
+name        = "ESP32-S2 Dev Module"
+fqbn        = "esp32:esp32:esp32s2"
+variant     = "esp32s2"
+flash_kb    = 4096
+ram_kb      = 320
+description = "ESP32-S2 — single-core Xtensa LX7, native USB, WiFi"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "esp32"
+variant     = "esp32s2"
+
+[defines]
+values = ["ARDUINO_ESP32S2_DEV", "ARDUINO_ARCH_ESP32", "CONFIG_IDF_TARGET_ESP32S2"]

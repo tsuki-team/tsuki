@@ -269,6 +269,7 @@ impl Transpiler {
             }
 
             // Track variable → package for instance-method dispatch
+            // ── Fast path: explicit type annotation (e.g. var sensor dht.DHT = ...) ──
             if let Some(Type::Named(type_name)) = ty {
                 let pkg_part = type_name.split('.').next().unwrap_or("");
                 if let Some(canon) = self.pkg_map.get(pkg_part).cloned() {
@@ -289,6 +290,35 @@ impl Transpiler {
                                 }
                             } else {
                                 return Ok(format!("{} {};\n", class, name));
+                            }
+                        }
+                    }
+                }
+            }
+            // ── Inferred path: no annotation but init is pkg.Constructor(...) ──
+            // e.g. var sensor = dht.New(pin, dht.DHT22)
+            // Mirror the ShortDecl logic so var_types is populated and cpp_class
+            // constructor syntax is applied consistently.
+            if ty.is_none() {
+                if let Some(init_expr) = init {
+                    if let Expr::Call { func, .. } = init_expr {
+                        if let Expr::Select { expr: pkg_expr, .. } = func.as_ref() {
+                            if let Expr::Ident { name: pkg_alias, .. } = pkg_expr.as_ref() {
+                                if let Some(canon) = self.pkg_map.get(pkg_alias.as_str()).cloned() {
+                                    self.var_types.insert(name.clone(), canon.clone());
+                                    if let Some(pkg) = self.rt.pkg(&canon) {
+                                        if let Some(class) = pkg.cpp_class.clone() {
+                                            let val = self.emit_expr(init_expr)?;
+                                            let ctor_prefix = format!("{}(", class);
+                                            if val.starts_with(&ctor_prefix) && val.ends_with(')') {
+                                                let inner = &val[ctor_prefix.len()..val.len()-1];
+                                                return Ok(format!("{} {}({});\n", class, name, inner));
+                                            } else {
+                                                return Ok(format!("{} {} = {};\n", class, name, val));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -374,6 +404,21 @@ impl Transpiler {
         let pad = self.pad();
         match stmt {
             Stmt::VarDecl { name, ty, init, .. } => {
+                // Infer package type from RHS constructor call (mirrors ShortDecl logic)
+                // so that  var sensor = dht.New(...)  inside a function also works.
+                if ty.is_none() {
+                    if let Some(init_expr) = init {
+                        if let Expr::Call { func, .. } = init_expr {
+                            if let Expr::Select { expr: pkg_expr, .. } = func.as_ref() {
+                                if let Expr::Ident { name: pkg_alias, .. } = pkg_expr.as_ref() {
+                                    if let Some(canon) = self.pkg_map.get(pkg_alias.as_str()).cloned() {
+                                        self.var_types.insert(name.clone(), canon);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 let t = ty.as_ref().map(|t| t.to_cpp_str())
                     .unwrap_or(std::borrow::Cow::Borrowed("auto"));
                 buf.push_str(pad);

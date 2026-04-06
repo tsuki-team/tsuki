@@ -1,0 +1,17 @@
+[board]
+id          = "esp32c3"
+name        = "ESP32-C3 Dev Module"
+fqbn        = "esp32:esp32:esp32c3"
+variant     = "esp32c3"
+flash_kb    = 4096
+ram_kb      = 400
+description = "ESP32-C3 — RISC-V single-core, WiFi, BT 5.0, native USB"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "esp32"
+variant     = "esp32c3"
+
+[defines]
+values = ["ARDUINO_ESP32C3_DEV", "ARDUINO_ARCH_ESP32", "CONFIG_IDF_TARGET_ESP32C3"]

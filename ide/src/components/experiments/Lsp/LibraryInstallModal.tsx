@@ -45,7 +45,7 @@ export default function LibraryInstallModal({
     >
       {/* Card — bottom-right, non-blocking */}
       <div
-        className="w-[400px] rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl overflow-hidden"
+        className="w-[clamp(300px,94vw,400px)] max-h-[85vh] rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl overflow-hidden flex flex-col"
         style={{
           pointerEvents: 'all',
           boxShadow: '0 16px 48px rgba(0,0,0,0.55), 0 0 0 1px rgba(59,130,246,0.15)',

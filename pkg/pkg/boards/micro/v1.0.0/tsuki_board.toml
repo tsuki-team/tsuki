@@ -1,0 +1,20 @@
+[board]
+id          = "micro"
+name        = "Arduino Micro"
+fqbn        = "arduino:avr:micro"
+variant     = "micro"
+flash_kb    = 32
+ram_kb      = 2
+description = "Arduino Micro — ATmega32U4, native USB, breadboard-friendly"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "avr"
+mcu         = "atmega32u4"
+f_cpu       = 16000000
+programmer  = "avr109"
+baud        = 57600
+
+[defines]
+values = ["ARDUINO_AVR_MICRO", "ARDUINO_ARCH_AVR", "USB_VID=0x2341", "USB_PID=0x0037"]

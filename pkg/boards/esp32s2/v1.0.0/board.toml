@@ -1,0 +1,14 @@
+[board]
+id             = "esp32s2"
+name           = "ESP32-S2 Dev Module"
+version        = "1.0.0"
+fqbn           = "esp32:esp32:esp32s2"
+variant        = "esp32s2"
+flash_kb       = 4096
+ram_kb         = 320
+toolchain_type = "esp32"
+defines        = "ARDUINO_ESP32S2_DEV,ARDUINO_ARCH_ESP32,CONFIG_IDF_TARGET_ESP32S2"
+
+[esp32]
+variant = "esp32s2"
+f_cpu   = 240000000

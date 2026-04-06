@@ -11,7 +11,7 @@
 //    1. tsuki_REGISTRY env var  (single URL, prepended)
 //    2. config.json  registry_urls  (ordered list)
 //    3. config.json  registry_url   (legacy single-URL, backward compat)
-//    4. Built-in default (github.com/tsuki-team/tsuki - pkg/)
+//    4. Built-in default (github.com/s7lver/tsuki-pkgs)
 //
 //  Each registry JSON may include a "key_index_url" field pointing to its
 //  own signing-key index.  The global key index in config is the fallback.
@@ -54,6 +54,8 @@ func LibsDir() string {
 	return config.Default().ResolvedLibsDir()
 }
 
+
+
 func PackageDir(name, version string) string {
 	return filepath.Join(LibsDir(), name, version)
 }
@@ -72,6 +74,8 @@ func KeysDir() string {
 	}
 	return config.Default().ResolvedKeysDir()
 }
+
+
 
 // ── InstalledPackage ──────────────────────────────────────────────────────────
 
@@ -153,7 +157,7 @@ func Install(opts InstallOptions) (*InstalledPackage, error) {
 
 	// Signature verification
 	cfg, _ := config.Load()
-	if cfg != nil && cfg.VerifySignatures {
+	if cfg != nil && cfg.Packages.VerifySignatures {
 		if err := verifySignature(opts.Source, tomlData, cfg); err != nil {
 			return nil, fmt.Errorf("signature verification failed for %s@%s: %w", name, version, err)
 		}
@@ -389,13 +393,22 @@ func loadEd25519PublicKey(path string) (ed25519.PublicKey, error) {
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
+// RegistryBoardPackage is one board entry in a registry.json "boards" map.
+type RegistryBoardPackage struct {
+	Description string            `json:"description"`
+	Author      string            `json:"author"`
+	Latest      string            `json:"latest"`
+	Versions    map[string]string `json:"versions"` // version -> tsuki_board.toml URL
+}
+
 // RegistryIndex is the top-level object in a registry.json file.
 type RegistryIndex struct {
 	// KeyIndexURL optionally points to this registry's own signing-key index.
 	// If set, it is consulted first during signature verification.
 	KeyIndexURL string `json:"key_index_url,omitempty"`
 
-	Packages map[string]RegistryPackage `json:"packages"`
+	Packages map[string]RegistryPackage     `json:"packages"`
+	Boards   map[string]RegistryBoardPackage `json:"boards"`
 }
 
 type RegistryPackage struct {
@@ -705,4 +718,282 @@ func ReadLock(projectDir string) ([]LockEntry, error) {
 	}
 	var entries []LockEntry
 	return entries, json.Unmarshal(data, &entries)
+}
+// ── Board package management ──────────────────────────────────────────────────
+//
+// Board packages use the same registry (packages.json) but the "boards" key.
+// They are stored as tsuki_board.toml in BoardsDir/<id>/<version>/.
+
+func BoardsDir() string {
+	cfg, err := config.Load()
+	if err == nil {
+		return cfg.ResolvedBoardsDir()
+	}
+	if env := os.Getenv("tsuki_BOARDS"); env != "" {
+		return env
+	}
+	return config.Default().ResolvedBoardsDir()
+}
+
+func BoardPackageDir(id, version string) string {
+	return filepath.Join(BoardsDir(), id, version)
+}
+
+func BoardManifestPath(id, version string) string {
+	return filepath.Join(BoardPackageDir(id, version), "tsuki_board.toml")
+}
+
+// InstalledBoard represents an installed board package.
+type InstalledBoard struct {
+	ID          string
+	Version     string
+	Description string
+	FQBN        string
+	Path        string
+}
+
+// ListInstalledBoards returns all board packages installed in BoardsDir.
+func ListInstalledBoards() ([]InstalledBoard, error) {
+	root := BoardsDir()
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading boards dir: %w", err)
+	}
+
+	var boards []InstalledBoard
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		id := e.Name()
+		versions, _ := os.ReadDir(filepath.Join(root, id))
+		for _, v := range versions {
+			if !v.IsDir() {
+				continue
+			}
+			mpath := filepath.Join(root, id, v.Name(), "tsuki_board.toml")
+			if _, err := os.Stat(mpath); err != nil {
+				continue
+			}
+			ib := InstalledBoard{ID: id, Version: v.Name(), Path: mpath}
+			if data, err := os.ReadFile(mpath); err == nil {
+				ib.Description, ib.FQBN = quickParseBoardMeta(string(data))
+			}
+			boards = append(boards, ib)
+		}
+	}
+	sort.Slice(boards, func(i, j int) bool { return boards[i].ID < boards[j].ID })
+	return boards, nil
+}
+
+func quickParseBoardMeta(toml string) (description, fqbn string) {
+	for _, line := range strings.Split(toml, "\n") {
+		line = strings.TrimSpace(line)
+		k, v, ok := parseKV(line)
+		if !ok {
+			continue
+		}
+		switch k {
+		case "description":
+			description = v
+		case "fqbn":
+			fqbn = v
+		}
+	}
+	return
+}
+
+// InstallBoard installs a board package from a URL, local path, or registry name.
+func InstallBoard(opts InstallOptions) (*InstalledBoard, error) {
+	tomlData, err := fetchTOML(opts.Source)
+	if err != nil {
+		return nil, err
+	}
+	id, version, description, fqbn, err := parseBoardTOMLMeta(tomlData)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Version != "" {
+		version = opts.Version
+	}
+
+	destDir := BoardPackageDir(id, version)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating board package dir: %w", err)
+	}
+	destFile := filepath.Join(destDir, "tsuki_board.toml")
+	if err := os.WriteFile(destFile, []byte(tomlData), 0644); err != nil {
+		return nil, fmt.Errorf("writing tsuki_board.toml: %w", err)
+	}
+	return &InstalledBoard{
+		ID:          id,
+		Version:     version,
+		Description: description,
+		FQBN:        fqbn,
+		Path:        destFile,
+	}, nil
+}
+
+// RemoveBoard removes an installed board package.
+func RemoveBoard(id, version string) error {
+	dir := BoardPackageDir(id, version)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("board package %s@%s is not installed", id, version)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("removing %s: %w", dir, err)
+	}
+	parent := filepath.Join(BoardsDir(), id)
+	if entries, _ := os.ReadDir(parent); len(entries) == 0 {
+		os.Remove(parent)
+	}
+	return nil
+}
+
+// IsBoardInstalled returns whether a board package is installed.
+func IsBoardInstalled(id string) (bool, string) {
+	boards, _ := ListInstalledBoards()
+	for _, b := range boards {
+		if b.ID == id {
+			return true, b.Version
+		}
+	}
+	return false, ""
+}
+
+// InstallBoardFromRegistry installs a board package by ID from the registry.
+func InstallBoardFromRegistry(id, version string) (*InstalledBoard, error) {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.Default()
+	}
+
+	var boardEntry *RegistryBoardPackage
+	for _, regURL := range cfg.ResolvedRegistryURLs() {
+		idx, err := fetchRegistryFromURL(regURL)
+		if err != nil {
+			ui.Warn(fmt.Sprintf("registry unavailable: %s — %v", regURL, err))
+			continue
+		}
+		if entry, ok := idx.Boards[id]; ok {
+			e := entry
+			boardEntry = &e
+			break
+		}
+	}
+	if boardEntry == nil {
+		return nil, fmt.Errorf(
+			"board %q not found in any registry — run `tsuki boards search` to see available boards",
+			id,
+		)
+	}
+
+	ver := version
+	if ver == "" {
+		ver = boardEntry.Latest
+	}
+	tomlURL, ok := boardEntry.Versions[ver]
+	if !ok {
+		versions := make([]string, 0, len(boardEntry.Versions))
+		for v := range boardEntry.Versions {
+			versions = append(versions, v)
+		}
+		sort.Strings(versions)
+		return nil, fmt.Errorf(
+			"version %q not found for board %q. Available: %s",
+			ver, id, strings.Join(versions, ", "),
+		)
+	}
+	return InstallBoard(InstallOptions{Source: tomlURL, Version: ver})
+}
+
+// SearchBoardRegistry searches for board packages in the registry.
+func SearchBoardRegistry(query string) ([]RegistryEntry, error) {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.Default()
+	}
+
+	q := strings.ToLower(query)
+	var results []RegistryEntry
+
+	for _, regURL := range cfg.ResolvedRegistryURLs() {
+		idx, err := fetchRegistryFromURL(regURL)
+		if err != nil {
+			continue
+		}
+		for name, pkg := range idx.Boards {
+			if q == "" ||
+				strings.Contains(strings.ToLower(name), q) ||
+				strings.Contains(strings.ToLower(pkg.Description), q) {
+				results = append(results, RegistryEntry{
+					Name:        name,
+					Version:     pkg.Latest,
+					Description: pkg.Description,
+					URL:         pkg.Versions[pkg.Latest],
+				})
+			}
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
+	return results, nil
+}
+
+// ── Board TOML parser ─────────────────────────────────────────────────────────
+
+func parseBoardTOMLMeta(toml string) (id, version, description, fqbn string, err error) {
+	for _, line := range strings.Split(toml, "\n") {
+		line = strings.TrimSpace(line)
+		k, v, ok := parseKV(line)
+		if !ok {
+			continue
+		}
+		switch k {
+		case "id":
+			id = v
+		case "version":
+			version = v
+		case "description":
+			description = v
+		case "fqbn":
+			fqbn = v
+		}
+	}
+	if id == "" || fqbn == "" {
+		err = fmt.Errorf("tsuki_board.toml must declare [board] id and fqbn")
+	}
+	if version == "" {
+		version = "1.0.0"
+	}
+	return
+}
+
+// ── Print helpers for boards ──────────────────────────────────────────────────
+
+func PrintBoardList(boards []InstalledBoard) {
+	if len(boards) == 0 {
+		ui.Info("No board packages installed — run `tsuki boards install <id>` to add one")
+		return
+	}
+
+	ui.SectionTitle(fmt.Sprintf("Installed board packages (%d)", len(boards)))
+	fmt.Println()
+
+	ui.ColorTitle.Printf("  %-16s  %-10s  %-42s  %s\n", "ID", "VERSION", "DESCRIPTION", "FQBN")
+	ui.ColorMuted.Println("  " + strings.Repeat("─", 96))
+
+	for _, b := range boards {
+		desc := b.Description
+		if len(desc) > 42 {
+			desc = desc[:39] + "..."
+		}
+		ui.ColorKey.Printf("  %-16s", b.ID)
+		ui.ColorNumber.Printf("  %-10s", b.Version)
+		fmt.Printf("  %-42s", desc)
+		ui.ColorMuted.Printf("  %s\n", b.FQBN)
+	}
+	fmt.Println()
 }

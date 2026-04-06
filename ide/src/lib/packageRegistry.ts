@@ -53,28 +53,49 @@ async function fetchRegistry(
   currentPackages: PackageEntry[],
   force:           boolean,
 ): Promise<PackageEntry[]> {
-  const now     = Date.now()
-  const cached  = urlCache.get(url)
+  const now    = Date.now()
+  const cached = urlCache.get(url)
   if (!force && cached && (now - cached.ts) < CACHE_TTL) return cached.result
 
-  const res  = await fetch(url, { cache: 'no-cache' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  // On force-refresh, append a timestamp query param so GitHub's CDN cannot
+  // serve a stale response even when it ignores the `cache: no-cache` header.
+  const fetchUrl = force
+    ? `${url}${url.includes('?') ? '&' : '?'}_t=${now}`
+    : url
+
+  const res = await fetch(fetchUrl, { cache: 'no-cache' })
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching registry`)
   const json: RegistryJson = await res.json()
+
+  if (!json?.packages || typeof json.packages !== 'object') {
+    throw new Error('Registry JSON is missing the "packages" field')
+  }
 
   const installedMap = new Map<string, boolean>(
     currentPackages.map(p => [p.name, p.installed])
   )
 
-  const entries: PackageEntry[] = Object.entries(json.packages).map(
-    ([name, pkg]) => ({
-      name,
-      desc:      pkg.description,
-      version:   `v${pkg.latest}`,
-      url:       pkg.versions[pkg.latest] ?? '',
-      installed: installedMap.get(name) ?? false,
-      source:    url,
+  // Defensive: a single malformed entry must not crash the entire registry
+  // load. Log a warning and skip that entry instead.
+  const entries: PackageEntry[] = Object.entries(json.packages)
+    .map(([name, pkg]): PackageEntry | null => {
+      try {
+        const latest = pkg?.latest ?? ''
+        const toml   = pkg?.versions?.[latest] ?? ''
+        return {
+          name,
+          desc:      pkg?.description ?? '',
+          version:   latest ? `v${latest}` : '—',
+          url:       toml,
+          installed: installedMap.get(name) ?? false,
+          source:    url,
+        }
+      } catch (e) {
+        console.warn(`[tsuki] packageRegistry: skipping malformed entry "${name}":`, e)
+        return null
+      }
     })
-  )
+    .filter((e): e is PackageEntry => e !== null)
 
   urlCache.set(url, { result: entries, ts: now })
   return entries

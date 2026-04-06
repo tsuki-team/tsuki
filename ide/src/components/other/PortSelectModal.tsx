@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '@/lib/store'
-import { PlugZap, X, Radio, AlertTriangle } from 'lucide-react'
+import { PlugZap, X, Radio, AlertTriangle, RefreshCw } from 'lucide-react'
 import { spawnProcess, isTauri } from '@/lib/tauri'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -20,20 +20,69 @@ interface Props {
   onResult: (outcome: PortSelectOutcome) => void
 }
 
+interface DetectedPort {
+  port:      string   // "COM3", "/dev/ttyUSB0"
+  boardId:   string   // "nano", "unknown", …
+  vidPid:    string   // "1A86:7523" or "—"
+  boardName: string   // "Arduino Nano / clone (CH340)" or "—"
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function isPortStr(s: string): boolean {
-  const t = s.trim()
-  return t.startsWith('COM') ||
-         t.startsWith('/dev/tty') ||
-         t.startsWith('/dev/cu.')
+  return s.startsWith('COM') ||
+         s.startsWith('/dev/tty') ||
+         s.startsWith('/dev/cu.')
 }
 
-function stripDecoration(line: string): string {
-  return line
-    .replace(/\x1b\[[0-9;]*m/g, '')
-    .replace(/^[\s●✔✖▶…·─╭╰│]+/, '')
-    .trim()
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+/**
+ * Parse one line from `tsuki-flash detect` output.
+ *
+ * The detect command prints a padded table:
+ *   "  COM1                  unknown          —         —"
+ *   "  COM4                  nano             1A86:7523  Arduino Nano / clone (CH340)"
+ *
+ * We split on whitespace and take:
+ *   fields[0] → port  (the ONLY field we pass to avrdude)
+ *   fields[1] → board_id
+ *   fields[2] → vid:pid
+ *   fields[3+] → board_name
+ *
+ * Previously the entire trimmed line was stored as the port, which caused
+ * avrdude to receive "COM1                  unknown          —         —"
+ * instead of "COM1" → instant failure.
+ */
+function parseDetectLine(line: string): DetectedPort | null {
+  const clean  = stripAnsi(line)
+  const fields = clean.trim().split(/\s+/)
+  if (!fields.length) return null
+
+  const port = fields[0]
+  if (!isPortStr(port)) return null   // header row or empty
+
+  const boardId   = fields[1] || '—'
+  const vidPid    = fields[2] || '—'
+  // board_name may be multiple words; filter stray "—" sentinel tokens
+  const boardName = fields.slice(3).join(' ').replace(/^—$/, '—') || '—'
+
+  return { port, boardId, vidPid, boardName }
+}
+
+/** Human-readable subtitle shown under the port name in the list. */
+function portSubtitle(p: DetectedPort): string {
+  if (p.boardName !== '—') return p.boardName
+  if (p.vidPid    !== '—') return p.vidPid
+  if (p.boardId   !== '—' && p.boardId !== 'unknown') return p.boardId
+  return 'Unknown device'
+}
+
+/** True when we have a recognised board for this port. */
+function isKnownBoard(p: DetectedPort): boolean {
+  return p.boardId !== '—' && p.boardId !== 'unknown'
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -44,7 +93,7 @@ export default function PortSelectModal({ onResult }: Props) {
   const tsukiFlashBin = (settings.tsukiFlashPath?.trim() || 'tsuki-flash').replace(/^"|"$/g, '')
   const tsukiPath     = (settings.tsukiPath?.trim()      || 'tsuki').replace(/^"|"$/g, '')
 
-  const [ports,    setPorts   ] = useState<string[]>([])
+  const [ports,    setPorts   ] = useState<DetectedPort[]>([])
   const [selected, setSelected] = useState('')
   const [scanning, setScanning ] = useState(true)
   const [error,    setError   ] = useState('')
@@ -53,7 +102,14 @@ export default function PortSelectModal({ onResult }: Props) {
   const cancelledRef = useRef(false)
 
   // ── Port scan ───────────────────────────────────────────────────────────────
-  useEffect(() => {
+
+  const runScan = () => {
+    setPorts([])
+    setSelected('')
+    setError('')
+    setScanning(true)
+    cancelledRef.current = false
+
     if (!isTauri()) {
       setScanning(false)
       setError('Port detection is only available in the desktop app.')
@@ -61,41 +117,99 @@ export default function PortSelectModal({ onResult }: Props) {
     }
 
     ;(async () => {
-      const found: string[] = []
+      const found: DetectedPort[] = []
 
-      // Primary: tsuki-flash detect
+      // ── Primary: tsuki-flash detect --json ──────────────────────────────
+      // Each line is a JSON object (NDJSON):
+      //   {"port":"COM3","board_id":"nano","vid_pid":"1A86:7523","board_name":"Arduino Nano / clone (CH340)"}
+      //
+      // Requires tsuki-flash ≥ the version that added --json.
+      // On older binaries the flag is unknown so we fall through to the
+      // legacy table parser below.
+      let jsonOk = false
       try {
-        const h = await spawnProcess(tsukiFlashBin, ['detect'], undefined, (line) => {
-          const p = line.trim()
-          if (isPortStr(p)) found.push(p)
+        const h = await spawnProcess(tsukiFlashBin, ['detect', '--json'], undefined, (line) => {
+          const clean = line.trim()
+          if (!clean.startsWith('{')) return
+          try {
+            const obj = JSON.parse(clean)
+            if (typeof obj.port === 'string' && isPortStr(obj.port)) {
+              found.push({
+                port:      obj.port,
+                boardId:   typeof obj.board_id   === 'string' ? obj.board_id   : '—',
+                vidPid:    typeof obj.vid_pid     === 'string' ? obj.vid_pid    : '—',
+                boardName: typeof obj.board_name  === 'string' ? obj.board_name : '—',
+              })
+              jsonOk = true
+            }
+          } catch { /* malformed line — skip */ }
         })
         await h.done
         h.dispose()
       } catch { /* fall through */ }
 
-      // Fallback: tsuki monitor --list
-      if (!found.length) {
+      // ── Fallback A: tsuki-flash detect (legacy human table) ─────────────
+      // The detect command prints a fixed-width padded table:
+      //   "  COM1                  unknown          —         —"
+      //
+      // parseDetectLine() extracts ONLY the first whitespace token as the
+      // port so we never send a garbage string like
+      //   "COM1                  unknown          —         —"
+      // to avrdude.
+      if (!found.length && !jsonOk) {
         try {
-          const h = await spawnProcess(tsukiPath, ['monitor', '--list'], undefined, (line) => {
-            const p = stripDecoration(line)
-            if (isPortStr(p)) found.push(p)
+          const h = await spawnProcess(tsukiFlashBin, ['detect'], undefined, (line) => {
+            const p = parseDetectLine(line)
+            if (p) found.push(p)
           })
           await h.done
           h.dispose()
         } catch { /* fall through */ }
       }
 
+      // ── Fallback B: tsuki monitor --list ────────────────────────────────
+      if (!found.length) {
+        try {
+          const h = await spawnProcess(tsukiPath, ['monitor', '--list'], undefined, (line) => {
+            const clean  = stripAnsi(line)
+            const fields = clean.trim().split(/\s+/)
+            const port   = fields[0] || ''
+            if (isPortStr(port)) {
+              found.push({ port, boardId: '—', vidPid: '—', boardName: '—' })
+            }
+          })
+          await h.done
+          h.dispose()
+        } catch { /* give up */ }
+      }
+
       if (cancelledRef.current) return
 
-      const seen  = new Set<string>()
-      const unique = found.filter(p => { if (seen.has(p)) return false; seen.add(p); return true })
+      // Deduplicate by port string
+      const seen   = new Set<string>()
+      const unique = found.filter(p => {
+        if (seen.has(p.port)) return false
+        seen.add(p.port)
+        return true
+      })
+
+      // Sort: known boards first, then alphabetically
+      unique.sort((a, b) => {
+        const aKnown = isKnownBoard(a) ? 0 : 1
+        const bKnown = isKnownBoard(b) ? 0 : 1
+        if (aKnown !== bKnown) return aKnown - bKnown
+        return a.port.localeCompare(b.port)
+      })
 
       setPorts(unique)
-      if (unique.length > 0) setSelected(unique[0])
+      if (unique.length > 0) setSelected(unique[0].port)
       if (unique.length === 0) setError('No serial ports detected. Connect a board and try again, or type the port manually.')
       setScanning(false)
     })()
+  }
 
+  useEffect(() => {
+    runScan()
     return () => { cancelledRef.current = true }
   }, []) // eslint-disable-line
 
@@ -128,12 +242,13 @@ export default function PortSelectModal({ onResult }: Props) {
       <div
         className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col"
         style={{
-          width: 360,
+          width: 'min(380px, 94vw)',
+          maxHeight: '85vh',
+          overflow: 'hidden',
           background: 'var(--surface-2)',
           border: '1px solid var(--border)',
           borderRadius: 10,
           boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
-          overflow: 'hidden',
         }}
       >
         {/* Header */}
@@ -145,16 +260,27 @@ export default function PortSelectModal({ onResult }: Props) {
             <PlugZap size={14} className="text-[var(--ok)]" />
             <span className="text-sm font-semibold text-[var(--fg)]">Select upload port</span>
           </div>
-          <button
-            onClick={() => onResult({ cancel: true })}
-            className="w-6 h-6 flex items-center justify-center rounded text-[var(--fg-faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] bg-transparent border-0 cursor-pointer transition-colors"
-          >
-            <X size={13} />
-          </button>
+          <div className="flex items-center gap-1">
+            {/* Re-scan button */}
+            <button
+              onClick={runScan}
+              disabled={scanning}
+              title="Re-scan ports"
+              className="w-6 h-6 flex items-center justify-center rounded text-[var(--fg-faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] bg-transparent border-0 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={() => onResult({ cancel: true })}
+              className="w-6 h-6 flex items-center justify-center rounded text-[var(--fg-faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] bg-transparent border-0 cursor-pointer transition-colors"
+            >
+              <X size={13} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
-        <div className="flex flex-col gap-2 p-4">
+        <div className="flex flex-col gap-2 p-4 overflow-y-auto flex-1 min-h-0">
 
           {/* Scanning state */}
           {scanning && (
@@ -179,32 +305,51 @@ export default function PortSelectModal({ onResult }: Props) {
               <p className="text-[10px] text-[var(--fg-faint)] uppercase tracking-widest font-semibold mb-1">
                 Detected ports
               </p>
-              {ports.map(p => (
-                <button
-                  key={p}
-                  onClick={() => { setSelected(p); setManual('') }}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded text-left w-full cursor-pointer border transition-colors"
-                  style={{
-                    background:   selected === p ? 'rgba(34,197,94,0.08)' : 'var(--surface-3)',
-                    borderColor:  selected === p ? 'rgba(34,197,94,0.35)' : 'var(--border)',
-                    color:        'var(--fg)',
-                  }}
-                >
-                  {/* Radio dot */}
-                  <span
-                    className="w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors"
+              {ports.map(p => {
+                const isSelected = selected === p.port
+                const known      = isKnownBoard(p)
+                const subtitle   = portSubtitle(p)
+                return (
+                  <button
+                    key={p.port}
+                    onClick={() => { setSelected(p.port); setManual('') }}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded text-left w-full cursor-pointer border transition-colors"
                     style={{
-                      borderColor: selected === p ? 'var(--ok)' : 'var(--fg-faint)',
+                      background:  isSelected ? 'rgba(34,197,94,0.08)' : 'var(--surface-3)',
+                      borderColor: isSelected ? 'rgba(34,197,94,0.35)' : 'var(--border)',
+                      color:       'var(--fg)',
                     }}
                   >
-                    {selected === p && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--ok)]" />
-                    )}
-                  </span>
-                  <Radio size={11} className="text-[var(--fg-faint)] flex-shrink-0" />
-                  <span className="text-sm font-mono font-medium">{p}</span>
-                </button>
-              ))}
+                    {/* Radio dot */}
+                    <span
+                      className="w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors"
+                      style={{ borderColor: isSelected ? 'var(--ok)' : 'var(--fg-faint)' }}
+                    >
+                      {isSelected && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--ok)]" />
+                      )}
+                    </span>
+
+                    <Radio size={11} className="text-[var(--fg-faint)] flex-shrink-0" />
+
+                    {/* Port name + board info */}
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-mono font-medium leading-tight">{p.port}</span>
+                      {subtitle !== '—' && (
+                        <span
+                          className="text-[10px] leading-tight truncate"
+                          style={{ color: known ? 'var(--ok)' : 'var(--fg-faint)' }}
+                        >
+                          {subtitle}
+                          {p.vidPid !== '—' && subtitle !== p.vidPid && (
+                            <span className="ml-1 opacity-50">{p.vidPid}</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           )}
 
@@ -221,10 +366,10 @@ export default function PortSelectModal({ onResult }: Props) {
                 autoFocus={!ports.length}
                 className="w-full px-3 py-2 rounded border text-sm font-mono outline-none transition-colors"
                 style={{
-                  background:   'var(--surface-3)',
-                  borderColor:  manual.trim() ? 'rgba(34,197,94,0.35)' : 'var(--border)',
-                  color:        'var(--fg)',
-                  caretColor:   'var(--ok)',
+                  background:  'var(--surface-3)',
+                  borderColor: manual.trim() ? 'rgba(34,197,94,0.35)' : 'var(--border)',
+                  color:       'var(--fg)',
+                  caretColor:  'var(--ok)',
                 }}
               />
             </div>

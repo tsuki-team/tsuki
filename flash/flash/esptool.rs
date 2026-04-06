@@ -2,8 +2,11 @@
 //  tsuki-flash :: flash :: esptool  —  ESP32 / ESP8266 programmer
 // ─────────────────────────────────────────────────────────────────────────────
 
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use tsuki_ux::LiveBlock;
 use crate::boards::{Board, Toolchain};
 use crate::error::{FlashError, Result};
 
@@ -49,16 +52,56 @@ pub fn flash(firmware: &Path, port: &str, board: &Board, baud: u32, verbose: boo
         cmd.arg("--trace");
     }
 
-    let out = cmd.output()?;
+    let label = format!("esptool  [{}]  →  {}", board.id, port);
+    let mut block = LiveBlock::new(&label);
+    block.start();
 
-    if !out.status.success() {
-        return Err(FlashError::FlashFailed {
-            port: port.to_owned(),
-            output: String::from_utf8_lossy(&out.stderr).to_string(),
-        });
+    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            block.finish(false, Some("could not start esptool"));
+            return Err(FlashError::ToolchainNotFound(
+                format!("failed to spawn esptool: {}", e)
+            ));
+        }
+    };
+
+    // Drain stdout in a background thread to prevent pipe buffer deadlock.
+    // esptool writes progress to stderr; stdout is usually empty.
+    let stdout_drain = child.stdout.take().map(|stdout| {
+        thread::spawn(move || { BufReader::new(stdout).lines().for_each(drop); })
+    });
+
+    let mut captured: Vec<String> = Vec::new();
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().filter_map(|l| l.ok()) {
+            if !line.trim().is_empty() {
+                block.line(&line);
+                captured.push(line);
+            }
+        }
     }
 
-    Ok(())
+    if let Some(h) = stdout_drain { let _ = h.join(); }
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            block.finish(false, Some("wait failed"));
+            return Err(FlashError::Other(format!("esptool wait failed: {}", e)));
+        }
+    };
+
+    if status.success() {
+        block.finish(true, None);
+        Ok(())
+    } else {
+        block.finish(false, Some("upload failed"));
+        Err(FlashError::FlashFailed {
+            port:   port.to_owned(),
+            output: captured.join("\n").trim().to_owned(),
+        })
+    }
 }
 
 fn find_esptool() -> Option<String> {

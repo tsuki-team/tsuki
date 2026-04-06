@@ -210,12 +210,11 @@ function AnimatedBg({ stepIdx }: { stepIdx: number }) {
 //  Data
 // ─────────────────────────────────────────────────────────────────────────────
 
-type StepId = 'welcome'|'plan'|'profile'|'theme'|'language'|'board'|'import'|'cli'|'updates'|'tips'|'done'
+type StepId = 'welcome'|'profile'|'theme'|'language'|'board'|'import'|'cli'|'updates'|'tips'|'done'
 type ImportSource = 'none'|'arduino-ide'|'platformio'|'git'
 
 const STEPS: { id: StepId; title: string; subtitle: string; emoji: string; skippable: boolean }[] = [
   { id: 'welcome',  title: 'Welcome to tsuki',    subtitle: 'Write Go or Python. Flash Arduino.',          emoji: '月',  skippable: false },
-  { id: 'plan',     title: 'Choose your plan',    subtitle: 'Free forever or unlock Pro features',         emoji: '⭐', skippable: true  },
   { id: 'profile',  title: 'Your profile',         subtitle: 'A name and face for your workspace',         emoji: '👤', skippable: true  },
   { id: 'theme',    title: 'Pick a look',          subtitle: 'Choose how the IDE looks and feels',         emoji: '🎨', skippable: true  },
   { id: 'language', title: 'Interface language',   subtitle: 'What language should the IDE speak?',        emoji: '🌐', skippable: true  },
@@ -874,13 +873,12 @@ function Confetti() {
   )
 }
 
-function StepDone({ progress, username, theme, board, channel, plan, importSource }: {
+function StepDone({ progress, username, theme, board, channel, importSource }: {
   progress: number; username: string; theme: string; board: string
-  channel: string; plan: string; importSource: ImportSource
+  channel: string; importSource: ImportSource
 }) {
   const items = [
     { label: 'Name',    value: username.trim() || '(skipped)',        ok: !!username.trim() },
-    { label: 'Plan',    value: plan === 'pro' ? 'Pro (waitlist)' : 'Normal (free)', ok: true },
     { label: 'Theme',   value: THEMES.find(t => t.id === theme)?.name ?? theme,    ok: true },
     { label: 'Board',   value: BOARDS.find(b => b.id === board)?.label ?? board,   ok: true },
     { label: 'Updates', value: channel,                                              ok: true },
@@ -948,7 +946,7 @@ export default function OnboardingModal({ onClose, mode = 'first-run', forcedVer
   const [lang,      setLang]      = useState<'en'|'es'>(settings.language ?? 'en')
   const [channel,   setChannel]   = useState<'stable'|'testing'>(settings.updateChannel ?? 'stable')
   const [cliPath,   setCliPath]   = useState(settings.tsukiPath ?? '')
-  const [plan,      setPlan]      = useState<'normal'|'pro'>((settings as any).plan ?? 'normal')
+
 
   const [importSource, setImportSource] = useState<ImportSource>('none')
   const [importPath,   setImportPath]   = useState('')
@@ -996,7 +994,6 @@ export default function OnboardingModal({ onClose, mode = 'first-run', forcedVer
       }
       if (avatarUrl) updateSetting('avatarDataUrl', avatarUrl)
     }
-    if (s.id === 'plan')     updateSetting('plan' as any, plan)
     if (s.id === 'theme')    updateSetting('ideTheme', theme)
     if (s.id === 'language') updateSetting('language', lang)
     if (s.id === 'board')    updateSetting('defaultBoard', board)
@@ -1082,8 +1079,10 @@ export default function OnboardingModal({ onClose, mode = 'first-run', forcedVer
         )}
 
         {/* Main card */}
-        <div className="ob-card relative w-[620px] max-w-[96vw] max-h-[90vh] flex flex-col rounded-3xl overflow-hidden"
+        <div className="ob-card relative flex flex-col rounded-3xl overflow-hidden"
           style={{
+            width: 'clamp(320px, 96vw, 620px)',
+            maxHeight: 'min(90vh, 780px)',
             background: 'rgba(8,8,10,0.88)',
             backdropFilter: 'blur(32px) saturate(1.6)',
             border: '1px solid rgba(255,255,255,0.08)',
@@ -1097,7 +1096,7 @@ export default function OnboardingModal({ onClose, mode = 'first-run', forcedVer
           </div>
 
           {/* Header — keyed so it fades in cleanly on step change */}
-          <div key={`hdr-${stepIdx}`} className="ob-header px-8 pt-7 pb-5 flex-shrink-0 border-b border-white/[0.055]">
+          <div key={`hdr-${stepIdx}`} className="ob-header px-[clamp(20px,5vw,32px)] pt-[clamp(20px,4vw,28px)] pb-5 flex-shrink-0 border-b border-white/[0.055]">
             <div className="flex items-start gap-4">
               <div className="relative flex-shrink-0">
                 <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-[30px] select-none"
@@ -1120,11 +1119,10 @@ export default function OnboardingModal({ onClose, mode = 'first-run', forcedVer
           </div>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto min-h-0 px-8 py-6"
+          <div className="flex-1 overflow-y-auto min-h-0 px-[clamp(16px,5vw,32px)] py-5"
             style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}>
             <div key={stepKey} className={dir === 'f' ? 'ob-step-f' : 'ob-step-b'}>
               {step.id === 'welcome'  && <StepWelcome />}
-              {step.id === 'plan'     && <StepPlan plan={plan} onSelect={setPlan} />}
               {step.id === 'profile'  && <StepProfile username={username} onUsername={setUsername} avatarUrl={avatarUrl} onAvatar={setAvatarUrl} />}
               {step.id === 'theme'    && <StepTheme selected={theme} onSelect={setTheme} />}
               {step.id === 'language' && <StepLanguage lang={lang} onSelect={setLang} />}
@@ -1133,12 +1131,12 @@ export default function OnboardingModal({ onClose, mode = 'first-run', forcedVer
               {step.id === 'cli'      && <StepCli path={cliPath} onPath={setCliPath} detecting={detecting} detected={detected} onDetect={detectCli} />}
               {step.id === 'updates'  && <StepUpdates channel={channel} onChannel={setChannel} checking={checking} result={updateRes} onCheck={checkUpdate} />}
               {step.id === 'tips'     && <StepTips />}
-              {step.id === 'done'     && <StepDone progress={doneP} username={username} theme={theme} board={board} channel={channel} plan={plan} importSource={importSource} />}
+              {step.id === 'done'     && <StepDone progress={doneP} username={username} theme={theme} board={board} channel={channel} importSource={importSource} />}
             </div>
           </div>
 
           {/* Footer */}
-          <div className="px-8 py-5 flex items-center justify-between flex-shrink-0 border-t border-white/[0.055]"
+          <div className="px-[clamp(16px,5vw,32px)] py-4 flex items-center justify-between flex-shrink-0 border-t border-white/[0.055]"
             style={{ background: 'rgba(0,0,0,0.22)' }}>
             <button onClick={() => go(stepIdx - 1)} disabled={stepIdx === 0 || animating}
               className="ob-btn flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm text-white/35 hover:text-white/65 hover:bg-white/5 cursor-pointer border bg-transparent disabled:opacity-0"

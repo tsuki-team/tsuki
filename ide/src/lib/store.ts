@@ -3,9 +3,9 @@ import { create } from 'zustand'
 import { applyTheme, applyUiScale, applyFontRendering, applyCompactMode } from './themes'
 
 export type Screen = 'welcome' | 'ide' | 'settings' | 'docs'
-export type SidebarTab = 'files' | 'git' | 'packages' | 'examples' | 'platforms' | 'explorer'
+export type SidebarTab = 'files' | 'git' | 'packages' | 'platforms' | 'examples' | 'explorer'
 export type BottomTab = 'output' | 'problems' | 'terminal' | 'monitor' | 'explorer'
-export type SettingsTab = 'cli' | 'defaults' | 'editor' | 'appearance' | 'experiments' | 'exp-sandbox' | 'exp-git' | 'exp-lsp' | 'exp-workstations' | 'exp-webkit' | 'language' | 'developer' | 'profile' | 'updates' | 'export'
+export type SettingsTab = 'cli' | 'defaults' | 'editor' | 'appearance' | 'experiments' | 'exp-sandbox' | 'exp-git' | 'exp-lsp' | 'exp-workstations' | 'exp-webkit' | 'language' | 'developer' | 'profile' | 'updates' | 'export' | 'packages'
 
 export interface FileNode {
   id: string
@@ -87,7 +87,7 @@ export interface BoardPlatform {
   category:    string          // "wifi" | "basic" | "arm" etc.
   installed:   boolean
   installing?: boolean
-  url?:        string          // URL of tsukiboard.toml in registry
+  url?:        string          // URL of tsuki_board.toml in registry
 }
 
 export interface RecentProject {
@@ -137,8 +137,8 @@ export interface SettingsState {
   extraLibsDirs: string[]   // additional package search paths (merged with libsDir)
   registryUrl: string
   registryUrls: string[]   // additional registry sources (merged with registryUrl)
-  boardsRegistryUrl: string
   verifySignatures: boolean
+  installedBoardPkgs: string[]   // board package IDs that have been installed + precompiled
   // -- Updates
   updateChannel: 'stable' | 'testing'
   autoCheckUpdates: boolean
@@ -336,13 +336,6 @@ interface AppState {
   setPackageInstalling: (name: string, installing: boolean) => void
   /** Read installed packages from a parsed tsuki_package.json and update the store. */
   syncInstalledPackages: (manifestPkgs: Array<{ name: string; version?: string }>) => void
-  // Board platforms
-  platforms:                  BoardPlatform[]
-  platformsLoaded:            boolean
-  setPlatforms:               (p: BoardPlatform[]) => void
-  setBoardPlatformInstalling: (id: string, installing: boolean) => void
-  addInstalledPlatform:       (p: BoardPlatform) => void
-  removeInstalledPlatform:    (id: string) => void
   recentProjects: RecentProject[]
   addRecentProject: (p: RecentProject) => void
   removeRecentProject: (path: string) => void
@@ -452,10 +445,10 @@ const DEFAULT_SETTINGS: SettingsState = {
   color: true,
   libsDir: '~/.tsuki/libs',
   extraLibsDirs: [],
-  registryUrl: 'https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json',
+  registryUrl: 'https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json',
   registryUrls: [],
-  boardsRegistryUrl: 'https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/boards/boards.json',
   verifySignatures: true,
+  installedBoardPkgs: [],
   updateChannel: 'stable',
   autoCheckUpdates: true,
   lastUpdateCheck: null,
@@ -1214,20 +1207,6 @@ export const useStore = create<AppState>((set, get) => ({
   togglePackage: (name) => set((s) => ({ packages: s.packages.map(p => p.name === name ? { ...p, installed: !p.installed } : p) })),
   setPackageInstalling: (name, installing) => set((s) => ({ packages: s.packages.map(p => p.name === name ? { ...p, installing } : p) })),
 
-  platforms: [],
-  platformsLoaded: false,
-  setPlatforms: (platforms) => set({ platforms, platformsLoaded: true }),
-  setBoardPlatformInstalling: (id, installing) =>
-    set((s) => ({ platforms: s.platforms.map(p => p.id === id ? { ...p, installing } : p) })),
-  addInstalledPlatform: (platform) =>
-    set((s) => ({
-      platforms: s.platforms.some(p => p.id === platform.id)
-        ? s.platforms.map(p => p.id === platform.id ? { ...p, ...platform, installed: true } : p)
-        : [...s.platforms, { ...platform, installed: true }]
-    })),
-  removeInstalledPlatform: (id) =>
-    set((s) => ({ platforms: s.platforms.map(p => p.id === id ? { ...p, installed: false, installing: false } : p) })),
-
   syncInstalledPackages: (manifestPkgs) => {
     const installedNames = new Set(manifestPkgs.map(p => p.name))
     set((s) => {
@@ -1249,6 +1228,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ recentProjects: updated })
     saveRecentProjects(updated)
   },
+
   removeRecentProject: (path) => {
     const updated = get().recentProjects.filter(r => r.path !== path)
     set({ recentProjects: updated })

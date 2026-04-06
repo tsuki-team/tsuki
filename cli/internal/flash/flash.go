@@ -5,8 +5,12 @@
 package flash
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -104,16 +108,21 @@ func uploadTsukiFlash(board, buildDir, projectName string, opts Options) error {
 	}
 
 	ui.SectionTitle(fmt.Sprintf("Uploading to %s  [board: %s]  [tsuki-flash]", port, board))
-	sp := ui.NewSpinner("Flashing firmware...")
-	sp.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
 	defer cancel()
 
+	// Stream stdout and stderr directly to this process's output so the IDE
+	// console receives every line in real time. A bytes.Buffer captures the
+	// same output in parallel so renderFlashError can use it on failure.
+	var buf bytes.Buffer
 	cmd := exec.CommandContext(ctx, flashBin, args...)
-	out, err := cmd.CombinedOutput()
+	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+
+	err = cmd.Run()
+
 	if ctx.Err() == context.DeadlineExceeded {
-		sp.Stop(false, "upload timed out")
 		ui.Warn(fmt.Sprintf(
 			"avrdude did not respond on %s after %s.\n  Is the correct port selected? Try: tsuki upload --port <PORT>",
 			port, uploadTimeout,
@@ -121,12 +130,11 @@ func uploadTsukiFlash(board, buildDir, projectName string, opts Options) error {
 		return fmt.Errorf("upload timed out on %s", port)
 	}
 	if err != nil {
-		sp.Stop(false, "upload failed")
-		renderFlashError(string(out), port)
+		renderFlashError(buf.String(), port)
 		return fmt.Errorf("upload failed")
 	}
 
-	sp.Stop(true, fmt.Sprintf("firmware uploaded to %s", port))
+	ui.Success(fmt.Sprintf("Firmware uploaded to %s", port))
 	return nil
 }
 
@@ -163,16 +171,47 @@ func uploadArduinoCLI(board, buildDir string, opts Options) error {
 	}
 
 	ui.SectionTitle(fmt.Sprintf("Uploading to %s  [%s]", port, fqbn))
-	sp := ui.NewSpinner("Flashing firmware...")
-	sp.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, arduinoCLI, args...)
-	out, err := cmd.CombinedOutput()
+
+	label := fmt.Sprintf("arduino-cli upload  [%s]  →  %s", fqbn, port)
+	block := ui.NewLiveBlock(label)
+	block.Start()
+
+	pipeR, pipeW, pipeErr := os.Pipe()
+	if pipeErr == nil {
+		cmd.Stdout = pipeW
+		cmd.Stderr = pipeW
+	}
+
+	var captured strings.Builder
+	if startErr := cmd.Start(); startErr != nil {
+		if pipeR != nil {
+			pipeW.Close()
+			pipeR.Close()
+		}
+		block.Finish(false, fmt.Sprintf("failed to start: %s", startErr))
+		return fmt.Errorf("upload failed")
+	}
+
+	if pipeR != nil {
+		pipeW.Close()
+		scanner := bufio.NewScanner(pipeR)
+		for scanner.Scan() {
+			line := scanner.Text()
+			captured.WriteString(line + "\n")
+			block.Line(line)
+		}
+		pipeR.Close()
+	}
+
+	err = cmd.Wait()
+
 	if ctx.Err() == context.DeadlineExceeded {
-		sp.Stop(false, "upload timed out")
+		block.Finish(false, fmt.Sprintf("timed out after %s", uploadTimeout))
 		ui.Warn(fmt.Sprintf(
 			"arduino-cli did not respond on %s after %s.\n  Is the correct port selected? Try: tsuki upload --port <PORT>",
 			port, uploadTimeout,
@@ -180,12 +219,13 @@ func uploadArduinoCLI(board, buildDir string, opts Options) error {
 		return fmt.Errorf("upload timed out on %s", port)
 	}
 	if err != nil {
-		sp.Stop(false, "upload failed")
-		renderFlashError(string(out), port)
+		block.Finish(false, "upload failed")
+		renderFlashError(captured.String(), port)
 		return fmt.Errorf("upload failed")
 	}
 
-	sp.Stop(true, fmt.Sprintf("firmware uploaded to %s", port))
+	block.Finish(true, "")
+	ui.Success(fmt.Sprintf("Firmware uploaded to %s", port))
 	return nil
 }
 

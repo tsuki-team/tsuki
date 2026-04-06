@@ -67,6 +67,8 @@ export interface LspEngineOptions {
   lspGoEnabled:  boolean
   lspCppEnabled: boolean
   lspInoEnabled: boolean
+  /** Names of packages already present in tsuki_package.json (lowercase). */
+  installedPackages?: Set<string>
 }
 
 // ─── Arduino / C++ built-in symbol tables ─────────────────────────────────────
@@ -331,7 +333,7 @@ const ARDUINO_METHOD_ARITIES: Record<string, [number, number]> = {
 /** fmt package functions that expect a format string as first arg */
 const FMT_FORMAT_FUNCS = new Set(['Printf', 'Sprintf', 'Fprintf', 'Errorf', 'Sscanf', 'Fscanf', 'Scanf'])
 
-function diagnoseGo(code: string, filename: string): Diagnostic[] {
+function diagnoseGo(code: string, filename: string, installed: Set<string> = new Set()): Diagnostic[] {
   const diags: Diagnostic[] = []
   const lines = code.split('\n')
   let uid = 0
@@ -417,7 +419,11 @@ function diagnoseGo(code: string, filename: string): Diagnostic[] {
 
   // Missing / unknown library
   imported.forEach(({ name, line }) => {
-    const info = KNOWN_LIBS[name]
+    // Case-insensitive lookup so "dht" matches KNOWN_LIBS["DHT"] etc.
+    const info = KNOWN_LIBS[name] ?? KNOWN_LIBS[name.toUpperCase()] ?? KNOWN_LIBS[name.toLowerCase()]
+    // Skip entirely if the package is already installed in the project
+    const isInstalled = installed.has(name.toLowerCase()) || installed.has(name)
+    if (isInstalled) return
     if (!info) {
       push('warning', 'lsp', line, 1, `Unknown package "${name}" — not in tsuki registry`,
         { missingLib: { importName: name, displayName: name, packageId: name, knownBuiltin: false, description: `"${name}" is not a known tsuki/Arduino library.` } })
@@ -670,7 +676,7 @@ const STD_HEADERS = new Set([
   'wiring_private', 'new', 'assert.h', 'stddef.h', 'float.h', 'limits.h',
 ])
 
-function diagnoseCpp(code: string, filename: string, isIno: boolean): Diagnostic[] {
+function diagnoseCpp(code: string, filename: string, isIno: boolean, installed: Set<string> = new Set()): Diagnostic[] {
   const diags: Diagnostic[] = []
   const lines = code.split('\n')
   let uid = 0
@@ -717,6 +723,9 @@ function diagnoseCpp(code: string, filename: string, isIno: boolean): Diagnostic
     const libName = header.replace(/\.h$/, '')
     if (STD_HEADERS.has(header) || STD_HEADERS.has(libName)) return
     const info = KNOWN_LIBS[libName] ?? KNOWN_LIBS[header]
+    // Skip if the package is already installed in the project
+    const isInstalled = installed.has(libName.toLowerCase()) || installed.has(libName)
+    if (isInstalled) return
     if (info && !info.knownBuiltin) {
       diags.push({ id: id(), severity: 'info', source: 'lsp', file: filename, line: i + 1, col: 1,
         message: `"${info.displayName}" v${info.version} may need to be installed`,
@@ -1177,10 +1186,11 @@ export function runDiagnostics(
   code: string, filename: string, ext: string, opts: LspEngineOptions,
 ): Diagnostic[] {
   if (!code.trim()) return []
+  const installed = opts.installedPackages ?? new Set<string>()
   try {
-    if (ext === 'go'  && opts.lspGoEnabled)  return diagnoseGo(code, filename)
-    if (ext === 'cpp' && opts.lspCppEnabled) return diagnoseCpp(code, filename, false)
-    if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true)
+    if (ext === 'go'  && opts.lspGoEnabled)  return diagnoseGo(code, filename, installed)
+    if (ext === 'cpp' && opts.lspCppEnabled) return diagnoseCpp(code, filename, false, installed)
+    if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true, installed)
     if (ext === 'py')                        return diagnosePy(code, filename)
   } catch { /* never crash the editor */ }
   return []

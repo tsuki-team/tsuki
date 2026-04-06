@@ -1,0 +1,14 @@
+[board]
+id             = "due"
+name           = "Arduino Due"
+version        = "1.0.0"
+fqbn           = "arduino:sam:arduino_due_x"
+variant        = "arduino_due_x"
+flash_kb       = 512
+ram_kb         = 96
+toolchain_type = "sam"
+defines        = "ARDUINO_SAM_DUE,ARDUINO_ARCH_SAM,__SAM3X8E__"
+
+[sam]
+mcu   = "cortex-m3"
+f_cpu = 84000000

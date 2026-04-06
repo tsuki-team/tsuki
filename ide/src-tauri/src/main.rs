@@ -583,17 +583,13 @@ fn resolve_cmd(raw: &str) -> String {
         return result;
     }
 
-    // Bare name — use which crate with enriched PATH on Windows
+    // Bare name — use which_in with enriched PATH (thread-safe: no global set_var).
     #[cfg(windows)]
     {
-        // which respects the PATH env var; temporarily extend it so
-        // per-user install locations (tsuki, Go, arduino-cli) are found.
-        let orig = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", enriched_path());
-        let result = which::which(s)
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let result = which::which_in(s, Some(enriched_path()), &cwd)
             .map(|p: std::path::PathBuf| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| s.to_string());
-        std::env::set_var("PATH", orig);
         dbg_cat(&LOG_CAT_RESOLVE, &format!("[resolve_cmd] which={:?}", result));
         result
     }
@@ -776,16 +772,15 @@ async fn detect_tool(name: String) -> Result<String, String> {
         return Ok(name);
     }
 
-    // Bare name — use which crate with enriched PATH on Windows
+    // Bare name — use which_in with enriched PATH (thread-safe: no global set_var).
+    // which_in(binary, paths, cwd) searches the given path list without touching
+    // the process environment, so concurrent calls from async tasks cannot race.
     #[cfg(windows)]
     {
-        let orig = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", enriched_path());
-        let result = which::which(&name)
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        which::which_in(&name, Some(enriched_path()), &cwd)
             .map(|p: std::path::PathBuf| p.to_string_lossy().into_owned())
-            .map_err(|_| format!("'{}' not found in PATH", name));
-        std::env::set_var("PATH", orig);
-        result
+            .map_err(|_| format!("'{}' not found in PATH", name))
     }
     #[cfg(not(windows))]
     {
@@ -904,10 +899,48 @@ async fn get_tmp_go_path() -> String {
     format!("{}/tsuki_sim_src.go", dir)
 }
 
-/// Reads tsukiPath from settings.json, falls back to "tsuki".
+/// Returns the configured tsuki CLI binary path.
+/// Strategy (mirrors get_tsuki_core_bin):
+///   1. Explicit tsukiPath setting (absolute path saved by the user or auto-detect)
+///   2. Expected install location: %LOCALAPPDATA%\Programs\tsuki\bin\tsuki.exe
+///      — written by the Inno installer; checked here so the IDE works immediately
+///      after install even before the user opens Settings.
+///   3. Bare "tsuki" — resolved from PATH via enriched_path() at spawn time.
 #[tauri::command]
 async fn get_tsuki_bin(app: tauri::AppHandle) -> String {
-    read_setting_or(&app, "tsukiPath", "tsuki")
+    // 1. Explicit setting (absolute path already verified/saved)
+    let stored = read_setting_or(&app, "tsukiPath", "");
+    let is_absolute = stored.contains('\\') || stored.contains('/');
+    if is_absolute && std::path::Path::new(&stored).exists() {
+        return stored;
+    }
+
+    // 2. Registry-written install location (Windows only)
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let ext = ".exe";
+            let candidate = std::path::Path::new(&local)
+                .join("Programs").join("tsuki").join("bin")
+                .join(format!("tsuki{}", ext));
+            if candidate.exists() {
+                let path = candidate.to_string_lossy().into_owned();
+                // Persist for future calls so Settings shows the resolved path
+                if let Ok(dir) = app.path_resolver().app_config_dir().ok_or(()) {
+                    if let Ok(raw) = std::fs::read_to_string(dir.join("settings.json")) {
+                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                            v["tsukiPath"] = serde_json::Value::String(path.clone());
+                            let _ = std::fs::write(dir.join("settings.json"), v.to_string());
+                        }
+                    }
+                }
+                return path;
+            }
+        }
+    }
+
+    // 3. Bare name — resolved from enriched PATH at spawn time via resolve_cmd
+    "tsuki".into()
 }
 
 /// Returns the configured tsuki-core binary path.
@@ -1043,17 +1076,31 @@ async fn run_simulator(
         sim.set_board(&board2);
 
         let limit     = if max_steps == 0 { usize::MAX } else { max_steps };
-        let min_frame = std::time::Duration::from_millis(50);
-        let mut last_emit = std::time::Instant::now()
+        let min_frame = std::time::Duration::from_millis(16); // ~60 fps max emission rate
+        let mut last_emit   = std::time::Instant::now()
             .checked_sub(std::time::Duration::from_millis(100))
             .unwrap_or_else(std::time::Instant::now);
-        let mut last_pins: HashMap<String, u16> = HashMap::new();
+        let mut last_pins:     HashMap<String, u16> = HashMap::new();
         let mut prev_step_ms = 0.0_f64;
+        // Wall-clock pacing: keep virtual_ms in sync with real elapsed time so
+        // a 2-second sleep doesn't run in 0 real milliseconds.
+        let wall_start    = std::time::Instant::now();
+        let mut virtual_ms_accum = 0.0_f64; // total virtual ms emitted so far
 
         for _ in 0..limit {
             if stop2.load(std::sync::atomic::Ordering::Relaxed) { break; }
 
             let result = sim.step();
+
+            // Cap serial messages before doing anything else — prevents the IDE
+            // renderer from being flooded by sketches with no or tiny delays.
+            let result_serial: Vec<String> = if result.serial.len() > 10 {
+                let mut capped = result.serial[..10].to_vec();
+                capped.push(format!("… ({} more suppressed)", result.serial.len() - 10));
+                capped
+            } else {
+                result.serial.clone()
+            };
 
             if !result.ok {
                 // Emit error immediately and exit
@@ -1074,7 +1121,7 @@ async fn run_simulator(
             //   HIGH → emit {pins:{13:1}} → sleep 500ms → LOW → emit {pins:{13:0}} → sleep 500ms
             let mut seg_pins = last_pins.clone();
             let mut seg_events_json: Vec<serde_json::Value> = Vec::new();
-            let mut seg_serial: Vec<String> = result.serial.clone(); // include serial from step
+            let mut seg_serial: Vec<String> = result_serial.clone(); // include serial from step
             let mut seg_start_ms = prev_step_ms;
             let mut had_delay = false;
 
@@ -1110,10 +1157,21 @@ async fn run_simulator(
                         last_emit = std::time::Instant::now();
                         last_pins = seg_pins.clone();
 
-                        // Sleep for the delay so virtual time ≈ wall time
-                        if delay_ms > 5.0 {
-                            std::thread::sleep(std::time::Duration::from_millis(delay_ms.min(500.0) as u64));
-                        }
+                        // Wall-clock pacing: sleep until real time has caught up to
+                        // virtual time. Always sleep at least min_frame (16ms) so we
+                        // never spin even when virtual delay is 0.
+                        virtual_ms_accum = event.t_ms;
+                        let real_elapsed_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
+                        let ahead_ms = virtual_ms_accum - real_elapsed_ms;
+                        let sleep_ms = if delay_ms >= 500.0 {
+                            // Long delay: sleep capped at 500ms then continue
+                            500.0_f64
+                        } else {
+                            // Short or zero delay: sleep however much keeps us in sync,
+                            // but always at least 16ms to cap at ~60 fps.
+                            ahead_ms.max(16.0).min(500.0)
+                        };
+                        std::thread::sleep(std::time::Duration::from_millis(sleep_ms as u64));
 
                         seg_events_json = vec![ev_json];
                         seg_start_ms = event.t_ms;
@@ -1142,12 +1200,14 @@ async fn run_simulator(
             last_pins = seg_pins;
             prev_step_ms = result.ms;
 
-            // For no-delay sketches, yield to avoid 100% CPU spin
+            // For no-delay sketches, yield enough to stay at ~60fps
             if !had_delay {
-                std::thread::sleep(std::time::Duration::from_micros(200));
+                let real_elapsed_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
+                let ahead_ms = prev_step_ms - real_elapsed_ms;
+                let sleep_ms = ahead_ms.max(16.0).min(100.0);
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms as u64));
             }
         }
-
 
         let _ = win_done2.emit(&format!("proc://{}:done", eid_done2), 0i32);
     });

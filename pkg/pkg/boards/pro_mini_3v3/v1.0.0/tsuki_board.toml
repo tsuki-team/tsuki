@@ -1,0 +1,20 @@
+[board]
+id          = "pro_mini_3v3"
+name        = "Arduino Pro Mini 3.3V"
+fqbn        = "arduino:avr:pro:cpu=8MHzatmega328"
+variant     = "eightanaloginputs"
+flash_kb    = 32
+ram_kb      = 2
+description = "Arduino Pro Mini 3.3V/8MHz — ATmega328P, low-power, no USB"
+author      = "tsuki-team"
+version     = "1.0.0"
+
+[toolchain]
+type        = "avr"
+mcu         = "atmega328p"
+f_cpu       = 8000000
+programmer  = "arduino"
+baud        = 57600
+
+[defines]
+values = ["ARDUINO_AVR_PRO", "ARDUINO_ARCH_AVR"]

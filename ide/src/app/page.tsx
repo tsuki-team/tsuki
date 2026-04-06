@@ -19,6 +19,33 @@ const DocsScreen     = dynamic(() => import('@/components/docs/DocsScreen'),    
 //  LocalStorage keys
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Bundled version — baked in at compile time by build.py via
+//  NEXT_PUBLIC_APP_VERSION. Falls back to '1.0.0' for dev / manual builds.
+//  Used as CURRENT_VERSION so the WhatsNew modal fires on install/update
+//  without depending on the Tauri backend pushing whatsNewVersion at runtime.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CURRENT_VERSION: string =
+  (process.env.NEXT_PUBLIC_APP_VERSION ?? '1.0.0').replace(/^v/, '')
+
+const BUNDLED_CHANGELOG: import('@/components/other/WhatsNewModal').ChangelogEntry[] = [
+  // ── Features ──────────────────────────────────────────────────────────────
+  { type: 'feature',     text: 'Transpilador Go → C++: escribe firmware Arduino en Go y obtén C++ listo para compilar.' },
+  { type: 'feature',     text: 'Soporte Python: pipeline Python → C++ alternativo al de Go.' },
+  { type: 'feature',     text: 'tsukilib: gestor de paquetes con soporte para DHT, BMP280, MPU6050, WS2812, u8g2, IR remote y stepper.' },
+  { type: 'feature',     text: 'Multi-board: Uno, Nano, Mega, ESP32, ESP8266 y Raspberry Pi Pico desde el primer día.' },
+  { type: 'feature',     text: 'IDE web integrada: editor con resaltado de sintaxis, explorador de archivos y panel de paquetes.' },
+  { type: 'feature',     text: 'Sandbox de circuitos: simulador visual para diseñar conexiones antes de cargar al hardware.' },
+  { type: 'feature',     text: 'Monitor serie integrado con autodetección de placa y selección de puerto USB.' },
+  { type: 'feature',     text: 'tsuki check: validación de fuentes con trazas de error enriquecidas (archivo, línea, columna y contexto).' },
+  // ── Improvements ──────────────────────────────────────────────────────────
+  { type: 'improvement', text: 'CLI completa: init, build, upload, check, config, pkg y boards — cada uno con flags detallados.' },
+  { type: 'improvement', text: 'Autodetección de placa USB en tsuki upload — sin necesidad de pasar --port manualmente.' },
+  { type: 'improvement', text: 'Configuración persistente en ~/.config/tsuki/config.json gestionada con tsuki config.' },
+  { type: 'improvement', text: 'Transpilador determinista: mismo código + board + paquetes produce siempre el mismo C++.' },
+]
+
 const LS_ONBOARDING_DONE    = 'tsuki-onboarding-done'
 const LS_ONBOARDING_VERSION = 'tsuki-onboarding-version'
 const LS_WHATS_NEW_SEEN     = 'tsuki-whats-new-seen'
@@ -119,23 +146,28 @@ export default function Page() {
 
   function checkWhatsNew(lastSeenWhatsNew: string) {
     try {
-      const wnVersion  = settings.whatsNewVersion
+      // Prefer version/changelog pushed by Tauri at runtime (future updates).
+      // Fall back to the compile-time constants so the modal fires on a fresh
+      // install or when the backend hasn't pushed an update yet.
+      const wnVersion   = settings.whatsNewVersion   ?? CURRENT_VERSION
       const wnChangelog = settings.whatsNewChangelog
-      if (
-        wnVersion &&
-        wnChangelog &&
-        semverGt(lastSeenWhatsNew, wnVersion)
-      ) {
+
+      if (!wnVersion || !semverGt(lastSeenWhatsNew, wnVersion)) return
+
+      let entries: ChangelogEntry[] = BUNDLED_CHANGELOG
+      if (wnChangelog) {
         try {
           const parsed: ChangelogEntry[] = JSON.parse(wnChangelog)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setWhatsNewVersion(wnVersion)
-            setWhatsNewEntries(parsed)
-            setShowWhatsNew(true)
-          }
-        } catch { /* malformed changelog JSON */ }
+          if (Array.isArray(parsed) && parsed.length > 0) entries = parsed
+        } catch { /* malformed JSON from backend — use bundled */ }
       }
-    } catch { /* ignore */ }
+
+      if (entries.length > 0) {
+        setWhatsNewVersion(wnVersion)
+        setWhatsNewEntries(entries)
+        setShowWhatsNew(true)
+      }
+    } catch { /* ignore — private browsing or SSR */ }
   }
 
   function handleOnboardingClose() {

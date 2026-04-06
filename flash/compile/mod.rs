@@ -117,40 +117,52 @@ fn augment_lib_includes(req: &CompileRequest) -> CompileRequest {
     let mut include_dirs = req.lib_include_dirs.clone();
     let mut source_dirs  = req.lib_source_dirs.clone();
 
-    if let Ok(libs_root) = crate::lib_manager::libs_root() {
-        if libs_root.is_dir() {
-            if let Ok(pkg_entries) = std::fs::read_dir(&libs_root) {
-                for pkg_entry in pkg_entries.flatten() {
-                    let pkg_path = pkg_entry.path();
-                    if !pkg_path.is_dir() { continue; }
+    if req.lib_include_dirs.is_empty() {
+        // No explicit --include flags: fall back to scanning all of libs_root.
+        // This path is taken only when tsuki-flash is invoked directly (not via
+        // the CLI), so all installed libraries are included as a convenience.
+        if let Ok(libs_root) = crate::lib_manager::libs_root() {
+            if libs_root.is_dir() {
+                if let Ok(pkg_entries) = std::fs::read_dir(&libs_root) {
+                    for pkg_entry in pkg_entries.flatten() {
+                        let pkg_path = pkg_entry.path();
+                        if !pkg_path.is_dir() { continue; }
 
-                    let mut has_versioned = false;
-                    if let Ok(ver_entries) = std::fs::read_dir(&pkg_path) {
-                        for ver_entry in ver_entries.flatten() {
-                            let ver_path = ver_entry.path();
-                            if !ver_path.is_dir() { continue; }
-                            let name_str = ver_entry.file_name();
-                            let name_str = name_str.to_string_lossy();
-                            if name_str.starts_with(|c: char| c.is_ascii_digit()) || name_str.starts_with('v') {
-                                has_versioned = true;
-
-                                add_lib_dir(&ver_path, &mut include_dirs, &mut source_dirs);
-
-                                let src = ver_path.join("src");
-                                if src.is_dir() {
-                                    add_lib_dir(&src, &mut include_dirs, &mut source_dirs);
+                        let mut has_versioned = false;
+                        if let Ok(ver_entries) = std::fs::read_dir(&pkg_path) {
+                            for ver_entry in ver_entries.flatten() {
+                                let ver_path = ver_entry.path();
+                                if !ver_path.is_dir() { continue; }
+                                let name_str = ver_entry.file_name();
+                                let name_str = name_str.to_string_lossy();
+                                if name_str.starts_with(|c: char| c.is_ascii_digit()) || name_str.starts_with('v') {
+                                    has_versioned = true;
+                                    add_lib_dir(&ver_path, &mut include_dirs, &mut source_dirs);
+                                    let src = ver_path.join("src");
+                                    if src.is_dir() {
+                                        add_lib_dir(&src, &mut include_dirs, &mut source_dirs);
+                                    }
                                 }
                             }
                         }
-                    }
-                    if !has_versioned {
-                        add_lib_dir(&pkg_path, &mut include_dirs, &mut source_dirs);
-                        let src = pkg_path.join("src");
-                        if src.is_dir() {
-                            add_lib_dir(&src, &mut include_dirs, &mut source_dirs);
+                        if !has_versioned {
+                            add_lib_dir(&pkg_path, &mut include_dirs, &mut source_dirs);
+                            let src = pkg_path.join("src");
+                            if src.is_dir() {
+                                add_lib_dir(&src, &mut include_dirs, &mut source_dirs);
+                            }
                         }
                     }
                 }
+            }
+        }
+    } else {
+        // Explicit --include dirs were provided by the CLI (one per package declared
+        // in tsuki_package.json).  Derive source_dirs only from those — do not scan
+        // all of libs_root and accidentally compile every installed library.
+        for dir in include_dirs.clone().iter() {
+            if dir_has_sources(dir) && !source_dirs.contains(dir) {
+                source_dirs.push(dir.clone());
             }
         }
     }

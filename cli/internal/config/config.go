@@ -19,30 +19,17 @@ import (
 	"strings"
 )
 
-const defaultRegistryURL = "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json"
-const defaultKeysIndexURL = "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/keys/index.json"
+const defaultRegistryURL = "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json"
+const defaultKeysIndexURL = "https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/keys/index.json"
 
-// Config holds all persistent user-level settings.
-type Config struct {
-	// ── Core tools ──────────────────────────────────────────────────────────
-	CoreBinary  string `json:"core_binary"  comment:"path to tsuki-core binary"`
-	ArduinoCLI  string `json:"arduino_cli"  comment:"path to arduino-cli binary"`
-	FlashBinary string `json:"flash_binary" comment:"path to tsuki-flash binary (used when backend=tsuki-flash)"`
-	// Backend selects the compile+upload toolchain: "tsuki-flash" or "arduino-cli".
-	// Set with: tsuki config set backend tsuki-flash
-	Backend      string `json:"backend"       comment:"compiler backend: tsuki-flash or arduino-cli (default: arduino-cli)"`
-	DefaultBoard string `json:"default_board" comment:"default target board"`
-	DefaultBaud  int    `json:"default_baud"  comment:"default serial baud rate"`
-
-	// ── Output ──────────────────────────────────────────────────────────────
-	Color      bool `json:"color"       comment:"enable colored output"`
-	Verbose    bool `json:"verbose"     comment:"verbose command output"`
-	AutoDetect bool `json:"auto_detect" comment:"auto-detect connected boards"`
-
-	// ── Package management ──────────────────────────────────────────────────
-
+// PackagesConfig groups all package-management settings.
+// Stored under the "packages" key in config.json.
+type PackagesConfig struct {
 	// LibsDir is where tsukilib packages are installed.
-	LibsDir string `json:"libs_dir" comment:"directory where packages are installed (leave empty for default)"`
+	LibsDir string `json:"libs_dir" comment:"directory where library packages are installed (leave empty for default)"`
+
+	// BoardsDir is where board packages (tsuki_board.toml) are installed.
+	BoardsDir string `json:"boards_dir" comment:"directory where board packages are installed (leave empty for default)"`
 
 	// RegistryURL is kept for backward compatibility with existing config files.
 	// Prefer RegistryURLs for multi-registry setups.
@@ -52,45 +39,66 @@ type Config struct {
 	// order (first registry wins on name collisions).
 	RegistryURLs []string `json:"registry_urls" comment:"ordered list of package registry URLs"`
 
-	// ── Signing keys ────────────────────────────────────────────────────────
-
 	// KeysDir is where downloaded public signing keys are cached.
 	KeysDir string `json:"keys_dir" comment:"directory where package signing keys are cached (leave empty for default)"`
 
 	// KeysIndexURL is the global fallback key-index URL.
-	// Individual registries may declare their own key index inside registry.json.
 	KeysIndexURL string `json:"keys_index_url" comment:"URL of the signing-key index JSON (global fallback)"`
 
 	// VerifySignatures controls whether package signatures are verified on install.
 	VerifySignatures bool `json:"verify_signatures" comment:"verify package signatures on install"`
 }
 
+// Config holds all persistent user-level settings.
+type Config struct {
+	// ── Core tools ──────────────────────────────────────────────────────────
+	CoreBinary  string `json:"core_binary"  comment:"path to tsuki-core binary"  section:"core"`
+	ArduinoCLI  string `json:"arduino_cli"  comment:"path to arduino-cli binary"  section:"core"`
+	FlashBinary string `json:"flash_binary" comment:"path to tsuki-flash binary"  section:"core"`
+	// Backend selects the compile+upload toolchain.
+	Backend      string `json:"backend"       comment:"compiler backend: tsuki-flash or arduino-cli (default: arduino-cli)" section:"core"`
+	DefaultBoard string `json:"default_board" comment:"default target board"   section:"core"`
+	DefaultBaud  int    `json:"default_baud"  comment:"default serial baud rate" section:"core"`
+
+	// ── Output ──────────────────────────────────────────────────────────────
+	Color      bool `json:"color"       comment:"enable colored output"           section:"output"`
+	Verbose    bool `json:"verbose"     comment:"verbose command output"           section:"output"`
+	AutoDetect bool `json:"auto_detect" comment:"auto-detect connected boards"     section:"output"`
+
+	// ── Package management ──────────────────────────────────────────────────
+	// Packages groups all package-management settings under "packages" in JSON.
+	Packages PackagesConfig `json:"packages" comment:"package management settings" section:"packages"`
+}
+
 // Default returns a Config with sensible defaults.
 func Default() *Config {
 	return &Config{
-		CoreBinary:       "",
-		ArduinoCLI:       "arduino-cli",
-		FlashBinary:      "tsuki-flash",
-		Backend:          "arduino-cli",
-		DefaultBoard:     "uno",
-		DefaultBaud:      9600,
-		Color:            true,
-		Verbose:          false,
-		AutoDetect:       true,
-		LibsDir:          "",
-		RegistryURL:      "",
-		RegistryURLs:     []string{}, // empty: falls through to registry_url or env var
-		KeysDir:          "",
-		KeysIndexURL:     defaultKeysIndexURL,
-		VerifySignatures: false,
+		CoreBinary:   "",
+		ArduinoCLI:   "arduino-cli",
+		FlashBinary:  "tsuki-flash",
+		Backend:      "arduino-cli",
+		DefaultBoard: "uno",
+		DefaultBaud:  9600,
+		Color:        true,
+		Verbose:      false,
+		AutoDetect:   true,
+		Packages: PackagesConfig{
+			LibsDir:          "",
+			BoardsDir:        "",
+			RegistryURL:      "",
+			RegistryURLs:     []string{},
+			KeysDir:          "",
+			KeysIndexURL:     defaultKeysIndexURL,
+			VerifySignatures: false,
+		},
 	}
 }
 
 // ── Computed paths ────────────────────────────────────────────────────────────
 
 func (c *Config) ResolvedLibsDir() string {
-	if c.LibsDir != "" {
-		return c.LibsDir
+	if c.Packages.LibsDir != "" {
+		return c.Packages.LibsDir
 	}
 	if env := os.Getenv("tsuki_LIBS"); env != "" {
 		return env
@@ -98,14 +106,22 @@ func (c *Config) ResolvedLibsDir() string {
 	return defaultLibsDir()
 }
 
-// ResolvedRegistryURLs returns the effective ordered list of registry URLs,
-// merging the legacy single-URL field with the new multi-URL field and
-// environment variable overrides.
+func (c *Config) ResolvedBoardsDir() string {
+	if c.Packages.BoardsDir != "" {
+		return c.Packages.BoardsDir
+	}
+	if env := os.Getenv("tsuki_BOARDS"); env != "" {
+		return env
+	}
+	return defaultBoardsDir()
+}
+
+// ResolvedRegistryURLs returns the effective ordered list of registry URLs.
 //
 // Priority (highest first):
 //  1. tsuki_REGISTRY env var  (single URL, prepended)
-//  2. Config RegistryURLs list
-//  3. Config RegistryURL (legacy, appended if not already present)
+//  2. Config Packages.RegistryURLs list
+//  3. Config Packages.RegistryURL (legacy, appended if not already present)
 //  4. Built-in default
 func (c *Config) ResolvedRegistryURLs() []string {
 	seen := make(map[string]bool)
@@ -119,30 +135,22 @@ func (c *Config) ResolvedRegistryURLs() []string {
 		}
 	}
 
-	// Env var override (prepend)
 	if env := os.Getenv("tsuki_REGISTRY"); env != "" {
 		add(env)
 	}
-
-	// Configured list
-	for _, u := range c.RegistryURLs {
+	for _, u := range c.Packages.RegistryURLs {
 		add(u)
 	}
-
-	// Legacy single-URL field (backward compat)
-	add(c.RegistryURL)
-
-	// Fallback to built-in default if nothing resolved
+	add(c.Packages.RegistryURL)
 	if len(urls) == 0 {
 		add(defaultRegistryURL)
 	}
 	return urls
 }
 
-// ResolvedKeysDir returns the effective signing-keys directory.
 func (c *Config) ResolvedKeysDir() string {
-	if c.KeysDir != "" {
-		return c.KeysDir
+	if c.Packages.KeysDir != "" {
+		return c.Packages.KeysDir
 	}
 	if env := os.Getenv("tsuki_KEYS"); env != "" {
 		return env
@@ -150,10 +158,9 @@ func (c *Config) ResolvedKeysDir() string {
 	return defaultKeysDir()
 }
 
-// ResolvedKeysIndexURL returns the effective global key-index URL.
 func (c *Config) ResolvedKeysIndexURL() string {
-	if c.KeysIndexURL != "" {
-		return c.KeysIndexURL
+	if c.Packages.KeysIndexURL != "" {
+		return c.Packages.KeysIndexURL
 	}
 	if env := os.Getenv("tsuki_KEYS_INDEX"); env != "" {
 		return env
@@ -173,6 +180,18 @@ func defaultLibsDir() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "tsuki", "libs")
+}
+
+func defaultBoardsDir() string {
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("APPDATA")
+		if base == "" {
+			base = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
+		}
+		return filepath.Join(base, "tsuki", "boards")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "tsuki", "boards")
 }
 
 func defaultKeysDir() string {
@@ -204,7 +223,6 @@ func configPath() (string, error) {
 }
 
 // Load reads the config from disk. Returns defaults if the file doesn't exist.
-// After loading, it migrates a legacy registry_url into registry_urls if needed.
 func Load() (*Config, error) {
 	path, err := configPath()
 	if err != nil {
@@ -217,16 +235,39 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
+
+	// Support old flat-format configs by trying to migrate them.
 	c := Default()
 	if err := json.Unmarshal(data, c); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
-	// Migration: if registry_urls is empty but legacy registry_url is set,
-	// move it into the list so existing configs keep working.
-	if len(c.RegistryURLs) == 0 && c.RegistryURL != "" {
-		c.RegistryURLs = []string{c.RegistryURL}
+
+	// Migration: read old top-level flat package fields into Packages struct
+	// for configs written before the "packages" section was introduced.
+	var raw map[string]json.RawMessage
+	if err2 := json.Unmarshal(data, &raw); err2 == nil {
+		migrateOldField(raw, "libs_dir", &c.Packages.LibsDir)
+		migrateOldField(raw, "boards_dir", &c.Packages.BoardsDir)
+		migrateOldField(raw, "registry_url", &c.Packages.RegistryURL)
+		migrateOldField(raw, "keys_dir", &c.Packages.KeysDir)
+		migrateOldField(raw, "keys_index_url", &c.Packages.KeysIndexURL)
 	}
+
+	// Migration: legacy registry_url → registry_urls
+	if len(c.Packages.RegistryURLs) == 0 && c.Packages.RegistryURL != "" {
+		c.Packages.RegistryURLs = []string{c.Packages.RegistryURL}
+	}
+
 	return c, nil
+}
+
+func migrateOldField(raw map[string]json.RawMessage, key string, dst *string) {
+	if v, ok := raw[key]; ok && *dst == "" {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			*dst = s
+		}
+	}
 }
 
 // Save writes the config to disk.
@@ -245,9 +286,36 @@ func (c *Config) Save() error {
 	return os.WriteFile(path, append(data, '\n'), 0644)
 }
 
-// Get returns the value of a config key by its JSON name.
+// ── Get / Set ─────────────────────────────────────────────────────────────────
+//
+// Supports both simple keys ("verbose") and dotted package keys ("packages.libs_dir").
+
 func (c *Config) Get(key string) (interface{}, error) {
-	rv := reflect.ValueOf(c).Elem()
+	// Dotted key: "packages.<subkey>"
+	if strings.HasPrefix(key, "packages.") {
+		subkey := strings.TrimPrefix(key, "packages.")
+		return getPackagesField(&c.Packages, subkey)
+	}
+	return getField(reflect.ValueOf(c).Elem(), key)
+}
+
+func (c *Config) Set(key, value string) error {
+	if strings.HasPrefix(key, "packages.") {
+		subkey := strings.TrimPrefix(key, "packages.")
+		return setPackagesField(&c.Packages, subkey, value)
+	}
+	return setField(reflect.ValueOf(c).Elem(), key, value)
+}
+
+func getPackagesField(p *PackagesConfig, key string) (interface{}, error) {
+	return getField(reflect.ValueOf(p).Elem(), key)
+}
+
+func setPackagesField(p *PackagesConfig, key, value string) error {
+	return setField(reflect.ValueOf(p).Elem(), key, value)
+}
+
+func getField(rv reflect.Value, key string) (interface{}, error) {
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
 		field := rt.Field(i)
@@ -259,9 +327,7 @@ func (c *Config) Get(key string) (interface{}, error) {
 	return nil, fmt.Errorf("unknown config key %q", key)
 }
 
-// Set updates a config key by its JSON name.
-func (c *Config) Set(key, value string) error {
-	rv := reflect.ValueOf(c).Elem()
+func setField(rv reflect.Value, key, value string) error {
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
 		field := rt.Field(i)
@@ -284,7 +350,6 @@ func (c *Config) Set(key, value string) error {
 				}
 				fv.SetInt(n)
 			case reflect.Slice:
-				// For string slices: comma-separated input
 				if fv.Type().Elem().Kind() == reflect.String {
 					parts := strings.Split(value, ",")
 					slice := reflect.MakeSlice(fv.Type(), len(parts), len(parts))
@@ -304,80 +369,114 @@ func (c *Config) Set(key, value string) error {
 	return fmt.Errorf("unknown config key %q", key)
 }
 
-// ── Registry list helpers ─────────────────────────────────────────────────────
+// ── Section-aware entry listing ───────────────────────────────────────────────
 
-// AddRegistry prepends url to RegistryURLs so it has the highest priority.
-// Returns false (no-op) if the URL is already in the list.
+type Entry struct {
+	Key     string
+	Value   interface{}
+	Comment string
+	Section string
+}
+
+func (c *Config) AllEntries() []Entry {
+	rv := reflect.ValueOf(c).Elem()
+	rt := rv.Type()
+	var entries []Entry
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		tag := strings.Split(field.Tag.Get("json"), ",")[0]
+		comment := field.Tag.Get("comment")
+		section := field.Tag.Get("section")
+		fv := rv.Field(i)
+
+		// Expand PackagesConfig sub-struct inline with "packages" section
+		if field.Type == reflect.TypeOf(PackagesConfig{}) {
+			pkgRv := fv
+			pkgRt := pkgRv.Type()
+			for j := 0; j < pkgRt.NumField(); j++ {
+				pf := pkgRt.Field(j)
+				ptag := strings.Split(pf.Tag.Get("json"), ",")[0]
+				if ptag == "" || ptag == "-" {
+					continue
+				}
+				entries = append(entries, Entry{
+					Key:     "packages." + ptag,
+					Value:   pkgRv.Field(j).Interface(),
+					Comment: pf.Tag.Get("comment"),
+					Section: "packages",
+				})
+			}
+			continue
+		}
+
+		entries = append(entries, Entry{
+			Key:     tag,
+			Value:   fv.Interface(),
+			Comment: comment,
+			Section: section,
+		})
+	}
+	return entries
+}
+
+// AllEntriesBySection returns entries grouped by section name.
+func (c *Config) AllEntriesBySection() map[string][]Entry {
+	sections := make(map[string][]Entry)
+	for _, e := range c.AllEntries() {
+		sec := e.Section
+		if sec == "" {
+			sec = "core"
+		}
+		sections[sec] = append(sections[sec], e)
+	}
+	return sections
+}
+
+// ── Registry list helpers (delegates to Packages) ─────────────────────────────
+
 func (c *Config) AddRegistry(url string) bool {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return false
 	}
-	for _, u := range c.RegistryURLs {
+	for _, u := range c.Packages.RegistryURLs {
 		if u == url {
-			return false // already present
+			return false
 		}
 	}
-	c.RegistryURLs = append([]string{url}, c.RegistryURLs...)
+	c.Packages.RegistryURLs = append([]string{url}, c.Packages.RegistryURLs...)
 	return true
 }
 
-// RemoveRegistry removes url from RegistryURLs.
-// Returns false (no-op) if the URL was not in the list.
 func (c *Config) RemoveRegistry(url string) bool {
 	url = strings.TrimSpace(url)
-	filtered := c.RegistryURLs[:0]
+	filtered := c.Packages.RegistryURLs[:0]
 	found := false
-	for _, u := range c.RegistryURLs {
+	for _, u := range c.Packages.RegistryURLs {
 		if u == url {
 			found = true
 			continue
 		}
 		filtered = append(filtered, u)
 	}
-	c.RegistryURLs = filtered
+	c.Packages.RegistryURLs = filtered
 	return found
 }
 
-// MoveRegistry changes the priority of an already-added registry.
-// direction: -1 = higher priority (towards index 0), +1 = lower priority.
-// Returns false if the URL was not found or is already at the boundary.
 func (c *Config) MoveRegistry(url string, direction int) bool {
-	for i, u := range c.RegistryURLs {
+	for i, u := range c.Packages.RegistryURLs {
 		if u != url {
 			continue
 		}
 		j := i + direction
-		if j < 0 || j >= len(c.RegistryURLs) {
+		if j < 0 || j >= len(c.Packages.RegistryURLs) {
 			return false
 		}
-		c.RegistryURLs[i], c.RegistryURLs[j] = c.RegistryURLs[j], c.RegistryURLs[i]
+		c.Packages.RegistryURLs[i], c.Packages.RegistryURLs[j] =
+			c.Packages.RegistryURLs[j], c.Packages.RegistryURLs[i]
 		return true
 	}
 	return false
-}
-
-type Entry struct {
-	Key     string
-	Value   interface{}
-	Comment string
-}
-
-func (c *Config) AllEntries() []Entry {
-	rv := reflect.ValueOf(c).Elem()
-	rt := rv.Type()
-	entries := make([]Entry, 0, rt.NumField())
-	for i := 0; i < rt.NumField(); i++ {
-		field := rt.Field(i)
-		tag := strings.Split(field.Tag.Get("json"), ",")[0]
-		comment := field.Tag.Get("comment")
-		entries = append(entries, Entry{
-			Key:     tag,
-			Value:   rv.Field(i).Interface(),
-			Comment: comment,
-		})
-	}
-	return entries
 }
 
 func Path() (string, error) {

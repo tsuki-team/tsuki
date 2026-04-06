@@ -264,9 +264,25 @@ impl Simulator {
             }
         }
 
+        let ms_before = self.virtual_ms;
         let flow = self.call_named("loop", vec![], &mut events, &mut serial);
         if let Flow::Error(e) = flow {
             return StepResult { ok: false, error: Some(e), events, pins: self.pin_map(), serial, ms: self.virtual_ms };
+        }
+
+        // Safety guard: if loop() ran with no delay at all, inject a synthetic 1ms
+        // delay so the simulator never runs at unbounded CPU speed. Without this,
+        // a missing or zero-valued delay (e.g. time.Millisecond evaluating to Nil)
+        // would flood the serial output and crash the IDE.
+        if self.virtual_ms <= ms_before {
+            self.virtual_ms += 1.0;
+        }
+
+        // Cap serial output per step to avoid flooding the IDE renderer.
+        if serial.len() > 20 {
+            let excess = serial.len() - 20;
+            serial.truncate(20);
+            serial.push(format!("… ({} more lines suppressed)", excess));
         }
 
         StepResult { ok: true, error: None, events, pins: self.pin_map(), serial, ms: self.virtual_ms }
@@ -463,6 +479,35 @@ impl Simulator {
                 }
                 _ => return Value::Nil,
             }
+        }
+
+        // ── Known sensor / peripheral method stubs ────────────────────────────
+        // When a variable from a tsukilib package (dht, bmp280, mpu6050, …) has a
+        // method called, the pkg/sub fields carry the variable name and the method
+        // name. We can't easily know the package here, so we match on the
+        // normalised method name and return plausible simulated values.
+        match m {
+            // DHT — temperature / humidity / heat index
+            "readtemperature"                    => return Value::Float(22.5 + (self.virtual_ms * 0.00013).sin() * 3.0),
+            "readtemperaturef"                   => return Value::Float(72.5 + (self.virtual_ms * 0.00013).sin() * 5.4),
+            "readhumidity"                       => return Value::Float(55.0 + (self.virtual_ms * 0.00017).cos() * 10.0),
+            "computeheatindex"  => {
+                let t = args.get(0).map(|v| v.as_f64()).unwrap_or(22.5);
+                let h = args.get(1).map(|v| v.as_f64()).unwrap_or(55.0);
+                return Value::Float(t + h * 0.05);
+            }
+            // BMP280 — pressure / altitude
+            "readpressure"    | "getpressure"    => return Value::Float(101325.0),
+            "readaltitude"    | "getaltitude"    => return Value::Float(150.0),
+            // MPU6050 — accelerometer / gyroscope
+            "getacceleration" | "getaccel"       => return Value::Float(0.0),
+            "getrotation"     | "getgyro"        => return Value::Float(0.0),
+            // Generic sensor no-ops
+            "begin" | "init" | "wake" | "reset" | "setpin" | "settype"
+                => return Value::Nil,
+            // isnan() — always false in sim (sensor readings are always valid)
+            "isnan" => return Value::Bool(false),
+            _ => {}
         }
 
         // Unknown — try as user function
@@ -878,6 +923,14 @@ impl Simulator {
                     ("arduino"|"", "A3")          => Value::Int(17),
                     ("arduino"|"", "A4")          => Value::Int(18),
                     ("arduino"|"", "A5")          => Value::Int(19),
+                    // time duration constants — values in milliseconds so that
+                    // time.Sleep(2000 * time.Millisecond) correctly sleeps 2000ms.
+                    ("time", "Millisecond") => Value::Float(1.0),
+                    ("time", "Second")      => Value::Float(1000.0),
+                    ("time", "Minute")      => Value::Float(60_000.0),
+                    ("time", "Hour")        => Value::Float(3_600_000.0),
+                    ("time", "Microsecond") => Value::Float(0.001),
+                    ("time", "Nanosecond")  => Value::Float(0.000_001),
                     _ => Value::Nil, // struct field access etc.
                 }
             }

@@ -7,7 +7,7 @@ import {
   Cpu, Wrench, FileCode, Folder, Code2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { pickFolder, isTauri } from '@/lib/tauri'
+import { pickFolder, isTauri, getDefaultProjectsDir } from '@/lib/tauri'
 import TsukiLogo from '@/components/shared/TsukiLogo'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
@@ -144,6 +144,14 @@ function StepName({
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
 
+  // Auto-fill location with the default projects folder on first render
+  useEffect(() => {
+    if (location) return
+    getDefaultProjectsDir().then(dir => {
+      if (dir) setLocation(dir)
+    })
+  }, []) // eslint-disable-line
+
   async function browse() {
     if (!isTauri()) return
     const folder = await pickFolder()
@@ -178,7 +186,7 @@ function StepName({
           <Input
             value={location}
             onChange={e => setLocation(e.target.value)}
-            placeholder={isTauri() ? 'Click Browse to choose a folder…' : '/home/user/projects'}
+            placeholder={isTauri() ? 'Loading default location…' : '/home/user/projects'}
             className="font-mono text-xs flex-1"
           />
           <button

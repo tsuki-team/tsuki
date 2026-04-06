@@ -29,6 +29,7 @@ const nextConfig = {
     outputFileTracingExcludes: {
       '*': ['src-tauri/**'],
     },
+    optimizePackageImports: ['lucide-react'],
   },
 }
 

@@ -194,6 +194,27 @@ export async function deleteFile(path: string): Promise<void> {
   return invoke<void>('delete_file', { path })
 }
 
+/** Opens the containing folder in the OS file manager (Explorer / Finder / Nautilus). */
+export async function revealInFileManager(folderPath: string): Promise<void> {
+  if (!isTauri()) return
+  try {
+    const { open } = await import('@tauri-apps/api/shell')
+    await open(folderPath)
+  } catch (e) {
+    console.error('[tsuki-ide] revealInFileManager error:', e)
+  }
+}
+
+/** Recursively deletes a directory and all its contents. */
+export async function removeDirectory(path: string): Promise<void> {
+  if (!isTauri()) {
+    console.error('[tsuki-ide] removeDirectory: no estamos en Tauri, path:', path)
+    return
+  }
+  const { removeDir } = await import('@tauri-apps/api/fs')
+  await removeDir(path, { recursive: true })
+}
+
 export async function renamePath(oldPath: string, newPath: string): Promise<void> {
   if (!isTauri()) {
     console.error('[tsuki-ide] renamePath: no estamos en Tauri')
@@ -431,6 +452,34 @@ export async function getDefaultBoard(): Promise<string> {
 export async function getHomeDir(): Promise<string | null> {
   if (!isTauri()) return null
   return invoke<string | null>('get_home_dir').catch(() => null)
+}
+
+/**
+ * Returns the default folder where new tsuki projects are saved.
+ * Priority: Documents/tsuki → Home/tsuki → Home
+ *
+ * Windows: C:\Users\<user>\Documents\tsuki
+ * Linux/macOS: ~/Documents/tsuki (or ~/tsuki as fallback)
+ */
+export async function getDefaultProjectsDir(): Promise<string> {
+  if (!isTauri()) return ''
+  try {
+    const { documentDir, homeDir } = await import('@tauri-apps/api/path')
+    const sep = (await homeDir()).includes('\\') ? '\\' : '/'
+    try {
+      const docs = await documentDir()
+      return `${docs.replace(/[/\\]$/, '')}${sep}tsuki`
+    } catch {
+      const home = await homeDir()
+      return `${home.replace(/[/\\]$/, '')}${sep}tsuki`
+    }
+  } catch {
+    // Last resort: use the Rust-side get_home_dir
+    const home = await getHomeDir()
+    if (!home) return ''
+    const sep = home.includes('\\') ? '\\' : '/'
+    return `${home.replace(/[/\\]$/, '')}${sep}tsuki`
+  }
 }
 
 // ── In-process transpilation ──────────────────────────────────────────────────

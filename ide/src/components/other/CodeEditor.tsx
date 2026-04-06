@@ -595,7 +595,7 @@ function IndentGuides({ code, fontSize, tabSize, scrollTop, scrollLeft, curLine 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function CodeEditor() {
-  const { openTabs, activeTabIdx, updateTabContent, saveFile, setProblems, settings, dispatchCommand, togglePackage } = useStore()
+  const { openTabs, activeTabIdx, updateTabContent, saveFile, setProblems, settings, dispatchCommand, togglePackage, packages } = useStore()
 
   const tab       = activeTabIdx >= 0 ? openTabs[activeTabIdx] : null
   const taRef     = useRef<HTMLTextAreaElement>(null)
@@ -692,7 +692,7 @@ export default function CodeEditor() {
     clearTimeout(lintTimer.current)
     lintTimer.current = setTimeout(() => runLsp(tab.content, tab.ext ?? '', tab.name, tab.fileId), settings.lspDiagnosticDelay ?? 600)
     return () => clearTimeout(lintTimer.current)
-  }, [tab?.fileId, lspEffective]) // eslint-disable-line
+  }, [tab?.fileId, lspEffective, packages]) // eslint-disable-line
 
   // Inlay hints refresh
   useEffect(() => {
@@ -708,10 +708,12 @@ export default function CodeEditor() {
 
   function runLsp(code: string, ext: string, name: string, fileId: string) {
     if (!lspEffective) { setDiags([]); return }
+    const installedPackages = new Set(packages.filter(p => p.installed).map(p => p.name.toLowerCase()))
     const result = runDiagnostics(code, name, ext, {
       lspGoEnabled:  settings.lspGoEnabled  ?? true,
       lspCppEnabled: settings.lspCppEnabled ?? true,
       lspInoEnabled: settings.lspInoEnabled ?? true,
+      installedPackages,
     })
     setDiags(result); setProblems(result)
     if (!settings.lspShowLibPrompt) return
@@ -1026,13 +1028,10 @@ export default function CodeEditor() {
   async function handleInstall(lib: LibraryInfo & { importName: string }) {
     const tsuki = (settings.tsukiPath || 'tsuki').replace(/^\"|"$/g, '')
     const args  = ['pkg', 'add', lib.packageId]
-    const cmd   = `${tsuki} ${args.join(' ')}`
-    const afterDispatch = () => {
-      useStore.getState().setBottomTab('terminal')
-      togglePackage(lib.packageId)
-    }
+    // dispatchCommand already switches bottomTab to 'output' — do NOT override it
+    // with 'terminal' here or the user sees the terminal while output goes to Output tab.
     dispatchCommand(tsuki, args, undefined)
-    afterDispatch()
+    togglePackage(lib.packageId)
   }
 
   function handleNeverAsk(importName: string) {

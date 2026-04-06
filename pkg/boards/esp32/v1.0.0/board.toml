@@ -1,0 +1,14 @@
+[board]
+id             = "esp32"
+name           = "ESP32 Dev Module"
+version        = "1.0.0"
+fqbn           = "esp32:esp32:esp32"
+variant        = "esp32"
+flash_kb       = 4096
+ram_kb         = 520
+toolchain_type = "esp32"
+defines        = "ARDUINO_ESP32_DEV,ARDUINO_ARCH_ESP32,ESP32"
+
+[esp32]
+variant = "esp32"
+f_cpu   = 240000000

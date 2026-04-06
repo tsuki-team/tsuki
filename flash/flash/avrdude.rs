@@ -2,8 +2,10 @@
 //  tsuki-flash :: flash :: avrdude  —  AVR board programmer
 // ─────────────────────────────────────────────────────────────────────────────
 
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use tsuki_ux::LiveBlock;
 use crate::boards::Board;
 use crate::error::{FlashError, Result};
 
@@ -41,18 +43,46 @@ pub fn flash(hex: &Path, port: &str, board: &Board, baud_override: u32, verbose:
     // With -q -q that output is suppressed and the user sees only the
     // generic "upload failed" with no actionable detail.
 
-    let out = cmd.output()?;
+    let label = format!("avrdude  [{}]  →  {}", board.id, port);
+    let mut block = LiveBlock::new(&label);
+    block.start();
 
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        return Err(FlashError::FlashFailed {
-            port:   port.to_owned(),
-            output: format!("{}\n{}", stderr, stdout).trim().to_owned(),
-        });
+    let mut child = match cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            block.finish(false, Some("could not start avrdude"));
+            return Err(FlashError::Other(format!("failed to spawn avrdude: {}", e)));
+        }
+    };
+
+    let mut captured: Vec<String> = Vec::new();
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().filter_map(|l| l.ok()) {
+            if !line.trim().is_empty() {
+                block.line(&line);
+                captured.push(line);
+            }
+        }
     }
 
-    Ok(())
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            block.finish(false, Some("wait failed"));
+            return Err(FlashError::Other(format!("avrdude wait failed: {}", e)));
+        }
+    };
+
+    if status.success() {
+        block.finish(true, None);
+        Ok(())
+    } else {
+        block.finish(false, Some("upload failed"));
+        Err(FlashError::FlashFailed {
+            port:   port.to_owned(),
+            output: captured.join("\n").trim().to_owned(),
+        })
+    }
 }
 
 /// Verify flash by reading back and comparing (optional sanity check).

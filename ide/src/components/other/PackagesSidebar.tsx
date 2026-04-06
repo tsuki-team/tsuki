@@ -12,7 +12,7 @@ import { clsx } from 'clsx'
 // ── Built-in registry fallback ────────────────────────────────────────────────
 // Mirrors BUILTIN_REGISTRY in SettingsScreen — must be kept in sync manually.
 
-const BUILTIN_REGISTRY_URL = 'https://raw.githubusercontent.com/s7lver2/tsuki/refs/heads/main/pkg/packages.json'
+const BUILTIN_REGISTRY_URL = 'https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json'
 
 // ── Per-package operation state ───────────────────────────────────────────────
 
@@ -490,7 +490,7 @@ export default function PackagesSidebar() {
   const {
     packages, togglePackage, setPackageInstalling,
     addLog, settings, projectPath,
-    dispatchCommand, setBottomTab,
+    dispatchCommand, dispatchBuild, setBottomTab,
     setPackages, packagesLoaded,
     syncInstalledPackages, openTabs, tree,
   } = useStore()
@@ -535,25 +535,39 @@ export default function PackagesSidebar() {
     return user.length > 0 ? user : [BUILTIN_REGISTRY_URL]
   }, [settings.registryUrls])
 
-  // Load registry on first mount
+  // Load registry on first mount (or when registry URLs change).
+  // The 5-minute in-memory cache in packageRegistry.ts prevents redundant
+  // network requests — we don't need the `packagesLoaded` guard here.
+  // Removing it ensures the list refreshes correctly when the component
+  // remounts or the URL config changes.
   useEffect(() => {
-    if (packagesLoaded) return
     const [primary, ...extras] = effectiveUrls()
     loadRegistry(primary, packages, false, extras)
       .then(entries => { setPackages(entries); setLoadError(false) })
       .catch(() => setLoadError(true))
   }, [settings.registryUrls]) // eslint-disable-line
 
+  // ── Re-read tsuki_package.json from disk and sync installed state ────────
+  async function resyncManifest() {
+    if (!projectPath) return
+    try {
+      const { readFile } = await import('@/lib/tauri')
+      const raw = await readFile(projectPath + '/tsuki_package.json')
+      const mf  = JSON.parse(raw)
+      if (Array.isArray(mf.packages)) {
+        syncInstalledPackages(mf.packages)
+      }
+    } catch { /* project has no manifest yet */ }
+  }
+
   // ── Install C++ lib to disk: tsuki pkg install <n> ────────────────────────
-  // dispatchCommand returns void — cannot be awaited.
-  // We fire the command and let the terminal show real output.
   function handleDownload(name: string) {
     const args = ['pkg', 'install', name]
     patchOp(name, { downloading: true, error: undefined, done: false })
-    setBottomTab('terminal')
+    setBottomTab('output')
     addLog('info', `[pkg] Running: ${tsuki} ${args.join(' ')}`)
-    dispatchCommand(tsuki, args, cwd)
-    // Clear spinner after 8 s; user can verify result in the terminal
+    dispatchBuild(tsuki, args, cwd)
+    // Clear spinner after 8 s; user can verify result in the Output tab
     setTimeout(() => {
       patchOp(name, { downloading: false })
       flashDone(name)
@@ -561,38 +575,37 @@ export default function PackagesSidebar() {
   }
 
   // ── Install + add to manifest ─────────────────────────────────────────────
-  // tsuki pkg add requires the package to be installed first.
-  // We dispatch install, wait, then dispatch add.
   async function handleAdd(name: string) {
     patchOp(name, { adding: true, error: undefined, done: false })
-    setBottomTab('terminal')
+    setBottomTab('output')
     addLog('info', `[pkg] Installing and adding "${name}" to project…`)
     setPackageInstalling(name, true)
-    dispatchCommand(tsuki, ['pkg', 'install', name], cwd)
+    dispatchBuild(tsuki, ['pkg', 'install', name], cwd)
     await new Promise(r => setTimeout(r, 4000))
-    dispatchCommand(tsuki, ['pkg', 'add', name], cwd)
+    dispatchBuild(tsuki, ['pkg', 'add', name], cwd)
     await new Promise(r => setTimeout(r, 1500))
     setPackageInstalling(name, false)
     togglePackage(name)
     patchOp(name, { adding: false })
     addLog('ok', `[pkg] "${name}" installed and added to project`)
     flashDone(name)
+    resyncManifest()
   }
 
   // ── Remove from manifest + disk ───────────────────────────────────────────
-  // Positional arg first, then --manifest flag (unambiguous for cobra).
   async function handleRemove(name: string) {
     patchOp(name, { removing: true, error: undefined, done: false })
-    setBottomTab('terminal')
+    setBottomTab('output')
     addLog('info', `[pkg] Removing "${name}" from project…`)
     setPackageInstalling(name, true)
-    dispatchCommand(tsuki, ['pkg', 'remove', name, '--manifest'], cwd)
+    dispatchBuild(tsuki, ['pkg', 'remove', name, '--manifest'], cwd)
     await new Promise(r => setTimeout(r, 1500))
     setPackageInstalling(name, false)
     togglePackage(name)
     patchOp(name, { removing: false })
     addLog('ok', `[pkg] "${name}" removed from project`)
     flashDone(name)
+    resyncManifest()
   }
 
   async function handleRefresh() {
@@ -604,7 +617,7 @@ export default function PackagesSidebar() {
     lr(primary, packages, true, extras)
       .then(entries => {
         setPackages(entries)
-        addLog('info', `[pkg] Registry refreshed — ${entries.length} packages`)
+        addLog('info', `[pkg] Registry refreshed — ${entries.length} package${entries.length !== 1 ? 's' : ''} found`)
       })
       .catch(() => setLoadError(true))
       .finally(() => setRefreshing(false))

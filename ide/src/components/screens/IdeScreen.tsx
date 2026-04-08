@@ -709,7 +709,7 @@ function EmptyEditor() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SandboxWorkstation({ sandboxEnabled }: { sandboxEnabled: boolean }) {
-  const { openTabs, activeTabIdx } = useStore()
+  const { openTabs, activeTabIdx, problems } = useStore()
   const [codeOpen,   setCodeOpen]   = useState(false)
   const [codeHeight, setCodeHeight] = useState(220)
   const draggingRef = useRef(false)
@@ -795,6 +795,23 @@ function SandboxWorkstation({ sandboxEnabled }: { sandboxEnabled: boolean }) {
           >
             Code
           </span>
+          {/* Checker error/warning badges */}
+          {problems.filter(p => p.severity === 'error').length > 0 && (
+            <span
+              className="flex items-center gap-1 px-1.5 rounded text-[9px] font-semibold"
+              style={{ background: 'color-mix(in srgb, #ef4444 15%, var(--surface-3))', color: '#ef4444' }}
+            >
+              {problems.filter(p => p.severity === 'error').length} error{problems.filter(p => p.severity === 'error').length !== 1 ? 's' : ''}
+            </span>
+          )}
+          {problems.filter(p => p.severity === 'warning').length > 0 && (
+            <span
+              className="flex items-center gap-1 px-1.5 rounded text-[9px] font-semibold"
+              style={{ background: 'color-mix(in srgb, #f59e0b 15%, var(--surface-3))', color: '#f59e0b' }}
+            >
+              {problems.filter(p => p.severity === 'warning').length} warn
+            </span>
+          )}
           {activeTab ? (
             <span className="text-[10px] font-mono text-[var(--fg-muted)] truncate" style={{ maxWidth: 200 }}>
               {activeTab.name}
@@ -811,6 +828,31 @@ function SandboxWorkstation({ sandboxEnabled }: { sandboxEnabled: boolean }) {
             className="overflow-auto border-t border-[var(--border)]"
             style={{ height: codeHeight, scrollbarWidth: 'thin' }}
           >
+            {/* Checker diagnostics panel — shown when there are problems */}
+            {problems.length > 0 && (
+              <div className="border-b border-[var(--border)]" style={{ background: 'var(--surface-2)' }}>
+                {problems.map(p => (
+                  <div
+                    key={p.id}
+                    className="flex items-start gap-2 px-3 py-1.5 border-b border-[var(--border)] last:border-b-0"
+                    style={{ background: p.severity === 'error' ? 'color-mix(in srgb, #ef4444 6%, var(--surface-2))' : p.severity === 'warning' ? 'color-mix(in srgb, #f59e0b 6%, var(--surface-2))' : 'var(--surface-2)' }}
+                  >
+                    <span
+                      className="flex-shrink-0 mt-px text-[9px] font-bold uppercase tracking-wide"
+                      style={{ color: p.severity === 'error' ? '#ef4444' : p.severity === 'warning' ? '#f59e0b' : 'var(--fg-muted)', minWidth: 36 }}
+                    >
+                      {p.severity === 'error' ? 'ERR' : p.severity === 'warning' ? 'WARN' : 'INFO'}
+                    </span>
+                    <span className="font-mono text-[10px] leading-4" style={{ color: 'var(--fg-muted)', minWidth: 52 }}>
+                      {p.file}:{p.line}:{p.col}
+                    </span>
+                    <span className="text-[11px] leading-4 flex-1" style={{ color: 'var(--fg)' }}>
+                      {p.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             {activeTab ? (
               <pre
                 className="p-3 text-xs leading-5 text-[var(--fg-muted)] whitespace-pre min-h-full m-0"

@@ -1,6 +1,6 @@
 [package]
 name = "tsuki-ide"
-version = "1.0.0"
+version = "1.2.0"
 description = "tsuki IDE — Write Go, Flash Arduino"
 authors = ["tsuki-team"]
 license = "MIT"

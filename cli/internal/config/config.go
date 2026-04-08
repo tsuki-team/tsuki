@@ -19,9 +19,18 @@ import (
 	"strings"
 )
 
-const defaultRegistryURL = "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/packages.json"
-const defaultKeysIndexURL = "https://raw.githubusercontent.com/tsuki-team/tsuki/refs/heads/main/pkg/keys/index.json"
-const defaultBoardsRegistryURL = "https://raw.githubusercontent.com/tsuki-team/tsuki-ex/refs/heads/main/pkg/packages.json"
+// defaultPkgRegistryBase is the raw base URL for tsuki-pkg — the dedicated
+// package registry repo (github.com/tsuki-team/tsuki-pkg).  Individual files
+// are fetched as {base}/libs/{name}/{version}/godotinolib.toml.
+const defaultPkgRegistryBase = "https://raw.githubusercontent.com/tsuki-team/tsuki-pkg/main"
+
+// defaultRegistryURL points to packages.json in the tsuki-pkg repo.
+const defaultRegistryURL = defaultPkgRegistryBase + "/packages.json"
+const defaultKeysIndexURL = defaultPkgRegistryBase + "/keys/index.json"
+const defaultBoardsRegistryURL = defaultPkgRegistryBase + "/boards.json"
+
+// DefaultBoardsRegistryURL is the exported form for use in other packages.
+const DefaultBoardsRegistryURL = defaultBoardsRegistryURL
 
 // PackagesConfig groups all package-management settings.
 // Stored under the "packages" key in config.json.
@@ -43,6 +52,11 @@ type PackagesConfig struct {
 	// BoardsRegistryURL is the URL of the board-support-package registry.
 	// Defaults to tsuki-ex (tsuki-team/tsuki-ex).
 	BoardsRegistryURL string `json:"boards_registry_url,omitempty" comment:"URL of the board support package registry (tsuki-ex format)"`
+
+	// PkgRegistryURL is the raw base URL of the tsuki-pkg repository.
+	// Individual lib files are fetched as {PkgRegistryURL}/libs/{name}/{ver}/godotinolib.toml.
+	// Defaults to github.com/tsuki-team/tsuki-pkg main branch.
+	PkgRegistryURL string `json:"pkg_registry_url,omitempty" comment:"base URL of tsuki-pkg repo (used for fetching individual package files)"`
 
 	// KeysDir is where downloaded public signing keys are cached.
 	KeysDir string `json:"keys_dir" comment:"directory where package signing keys are cached (leave empty for default)"`
@@ -93,6 +107,7 @@ func Default() *Config {
 			RegistryURL:       "",
 			RegistryURLs:      []string{defaultRegistryURL},
 			BoardsRegistryURL: defaultBoardsRegistryURL,
+			PkgRegistryURL:    defaultPkgRegistryBase,
 			KeysDir:           "",
 			KeysIndexURL:      defaultKeysIndexURL,
 			VerifySignatures:  false,
@@ -152,6 +167,18 @@ func (c *Config) ResolvedRegistryURLs() []string {
 		add(defaultRegistryURL)
 	}
 	return urls
+}
+
+// ResolvedPkgRegistryURL returns the effective base URL for tsuki-pkg.
+// Priority: env var tsuki_PKG_REGISTRY → config → built-in default.
+func (c *Config) ResolvedPkgRegistryURL() string {
+	if env := os.Getenv("tsuki_PKG_REGISTRY"); env != "" {
+		return strings.TrimRight(env, "/")
+	}
+	if c.Packages.PkgRegistryURL != "" {
+		return strings.TrimRight(c.Packages.PkgRegistryURL, "/")
+	}
+	return defaultPkgRegistryBase
 }
 
 func (c *Config) ResolvedKeysDir() string {

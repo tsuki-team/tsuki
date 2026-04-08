@@ -1,0 +1,53 @@
+[package]
+name        = "l298n"
+version     = "1.0.0"
+description = "L298N dual H-bridge DC motor driver (2-channel, PWM speed control)"
+author      = "tsuki-team"
+cpp_header  = "L298N.h"
+arduino_lib = "L298N"
+cpp_class   = "L298N"
+
+aliases = ["L298N", "MotorDriver"]
+
+[[function]]
+go     = "New"
+python = "new"
+cpp    = "L298N({0}, {1}, {2})"
+
+[[function]]
+go     = "Run"
+python = "run"
+cpp    = "{0}.run({1})"
+
+[[function]]
+go     = "Stop"
+python = "stop"
+cpp    = "{0}.stop()"
+
+[[function]]
+go     = "SetSpeed"
+python = "set_speed"
+cpp    = "{0}.setSpeed({1})"
+
+[[function]]
+go     = "IsMoving"
+python = "is_moving"
+cpp    = "{0}.isMoving()"
+
+[[constant]]
+go     = "FORWARD"
+python = "FORWARD"
+cpp    = "L298N::FORWARD"
+
+[[constant]]
+go     = "BACKWARD"
+python = "BACKWARD"
+cpp    = "L298N::BACKWARD"
+
+[[constant]]
+go     = "STOP"
+python = "STOP"
+cpp    = "L298N::STOP"
+
+[[example]]
+dir = "examples/basic"

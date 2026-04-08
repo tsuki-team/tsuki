@@ -1,0 +1,4 @@
+{
+  "name": "DC Motor Forward/Backward",
+  "description": "Drive a DC motor forward and backward with the L298N driver. EN=D5 (PWM), IN1=D6, IN2=D7."
+}

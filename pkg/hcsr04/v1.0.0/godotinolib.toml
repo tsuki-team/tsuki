@@ -1,0 +1,33 @@
+[package]
+name        = "hcsr04"
+version     = "1.0.0"
+description = "HC-SR04 ultrasonic distance sensor (trig/echo)"
+author      = "tsuki-team"
+cpp_header  = "HCSR04.h"
+arduino_lib = "HCSR04 ultrasonic sensor"
+cpp_class   = "HCSR04"
+
+aliases = ["HCSR04", "Ultrasonic"]
+
+[[function]]
+go     = "New"
+python = "new"
+cpp    = "HCSR04({0}, {1})"
+
+[[function]]
+go     = "Dist"
+python = "dist"
+cpp    = "{0}.dist()"
+
+[[function]]
+go     = "DistCm"
+python = "dist_cm"
+cpp    = "{0}.dist()"
+
+[[function]]
+go     = "DistInch"
+python = "dist_inch"
+cpp    = "({0}.dist() / 2.54)"
+
+[[example]]
+dir = "examples/basic"

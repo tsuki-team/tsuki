@@ -3,6 +3,7 @@
  * Runs entirely in the browser — no external process required.
  */
 import type { Problem } from '@/lib/store'
+import { runV2Diagnostics } from './tsukilspenginev2'
 
 // ─── Library registry ──────────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ export const KNOWN_LIBS: Record<string, LibraryInfo> = {
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Diagnostic extends Problem {
-  source: 'lsp' | 'lint'
+  source: 'lsp' | 'lint' | 'checker'
   endCol?: number
   missingLib?: LibraryInfo & { importName: string }
   quickFix?: { label: string; newText: string }
@@ -69,6 +70,10 @@ export interface LspEngineOptions {
   lspInoEnabled: boolean
   /** Names of packages already present in tsuki_package.json (lowercase). */
   installedPackages?: Set<string>
+  /** Checker strictness level. 'strict' enables T04xx and unused-symbol checks. */
+  checkerLevel?: 'none' | 'dev' | 'strict'
+  /** Active diagnostic engine mode from settings. Controls which engine(s) run. */
+  lspMode?: 'none' | 'v1' | 'v2' | 'hybrid' | 'checker'
 }
 
 // ─── Arduino / C++ built-in symbol tables ─────────────────────────────────────
@@ -333,7 +338,7 @@ const ARDUINO_METHOD_ARITIES: Record<string, [number, number]> = {
 /** fmt package functions that expect a format string as first arg */
 const FMT_FORMAT_FUNCS = new Set(['Printf', 'Sprintf', 'Fprintf', 'Errorf', 'Sscanf', 'Fscanf', 'Scanf'])
 
-function diagnoseGo(code: string, filename: string, installed: Set<string> = new Set()): Diagnostic[] {
+function diagnoseGo(code: string, filename: string, installed: Set<string> = new Set(), checkerLevel: 'none' | 'dev' | 'strict' = 'dev'): Diagnostic[] {
   const diags: Diagnostic[] = []
   const lines = code.split('\n')
   let uid = 0
@@ -482,6 +487,7 @@ function diagnoseGo(code: string, filename: string, installed: Set<string> = new
   // Track locally-declared short vars per function body (simple heuristic)
   const localVars = new Map<string, number>()  // name → declare line
   let inFuncDepth = 0
+  let inConstBlock = false  // inside a const ( ... ) block
 
   clines.forEach((s, i) => {
     const raw = lines[i]
@@ -554,6 +560,36 @@ function diagnoseGo(code: string, filename: string, installed: Set<string> = new
         push('warning', 'lint', ln, s.indexOf('fmt.') + 1,
           `fmt.${fmtCall[1]}() first argument should be a format string — did you mean fmt.Println()?`)
       }
+    }
+
+    // Track const ( ... ) block boundaries
+    if (/^\s*const\s*\(/.test(s)) inConstBlock = true
+    if (inConstBlock && /^\s*\)/.test(s)) inConstBlock = false
+
+    // ── Undeclared identifier in const/var initializer ──────────────────
+    // Catches: const test = hola  /  var x = unknownIdent
+    // Also catches inside const ( ... ) blocks: test = hola
+    const safeInit = new Set(['true', 'false', 'nil', 'iota'])
+
+    // Standalone: const/var NAME = IDENT  or  const NAME TYPE = IDENT
+    const constInitM = s.match(/^\s*(?:const|var)\s+\w+(?:\s+\w+)?\s*=\s*([a-zA-Z_]\w*)\s*$/)
+    // Inside const block: NAME = IDENT  (no const keyword)
+    const blockInitM = inConstBlock && !constInitM
+      ? s.match(/^\s*\w+\s*=\s*([a-zA-Z_]\w*)\s*$/)
+      : null
+
+    const initVal = constInitM?.[1] ?? blockInitM?.[1]
+    if (
+      initVal &&
+      !safeInit.has(initVal) &&
+      !GO_KEYWORDS.has(initVal) &&
+      !GO_BUILTINS.has(initVal) &&
+      !allKnown.has(initVal) &&
+      !localVars.has(initVal) &&
+      !funcSigs.has(initVal)
+    ) {
+      const col = s.indexOf(initVal) + 1
+      push('error', 'lint', ln, col, `"${initVal}" is not declared — undefined identifier`)
     }
 
     // ── Undeclared function calls (improved) ────────────────────────────
@@ -652,6 +688,35 @@ function diagnoseGo(code: string, filename: string, installed: Set<string> = new
     if (/\/\s*0\b/.test(s) && !/\/\//.test(s.slice(0, s.search(/\/\s*0/))))
       push('error', 'lint', ln, s.search(/\/\s*0/) + 1, 'Division by zero')
   })
+
+  // ── Strict-mode checks ────────────────────────────────────────────────────
+  if (checkerLevel === 'strict') {
+    // T0011: Unused constants — scan all const declarations
+    const allCodeClean = clines.join('\n')
+    const constRe = /\bconst\s+(\w+)\b/g
+    let cm2: RegExpExecArray | null
+    while ((cm2 = constRe.exec(allCodeClean)) !== null) {
+      const constName = cm2[1]
+      if (!constName || constName === '_' || GO_KEYWORDS.has(constName) || GO_BUILTINS.has(constName)) continue
+      const esc = constName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const allOccurrences = Array.from(allCodeClean.matchAll(new RegExp(`\\b${esc}\\b`, 'g')))
+      if (allOccurrences.length <= 1) {
+        const lineIdx = allCodeClean.slice(0, cm2.index).split('\n').length
+        push('warning', 'lint', lineIdx, 1, `Constant "${constName}" declared but never used`)
+      }
+    }
+
+    // T0400: String concatenation in loop (heap fragmentation on AVR)
+    let inLoop = false
+    clines.forEach((s, i) => {
+      const ln = i + 1
+      if (/^\s*for\s/.test(s)) inLoop = true
+      if (inLoop && /\+\s*"/.test(s) && !/\/\//.test(s.slice(0, s.search(/\+\s*"/)))) {
+        push('warning', 'lint', ln, 1, 'String concatenation in loop — heap fragmentation on AVR; use a byte buffer instead')
+      }
+      if (/^\s*\}/.test(s)) inLoop = false
+    })
+  }
 
   return deduplicateDiags(diags)
 }
@@ -1187,10 +1252,50 @@ export function runDiagnostics(
 ): Diagnostic[] {
   if (!code.trim()) return []
   const installed = opts.installedPackages ?? new Set<string>()
+  const level = opts.checkerLevel ?? 'dev'
+  const mode  = opts.lspMode ?? 'hybrid'
+
+  if (mode === 'none') return []
+
   try {
-    if (ext === 'go'  && opts.lspGoEnabled)  return diagnoseGo(code, filename, installed)
+    if (mode === 'v2') {
+      // Token-stream engine only
+      if (ext === 'go'  && opts.lspGoEnabled)  return runV2Diagnostics(code, filename, ext, opts)
+      if (ext === 'cpp' && opts.lspCppEnabled) return diagnoseCpp(code, filename, false, installed)
+      if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true,  installed)
+      if (ext === 'py')                        return diagnosePy(code, filename)
+      return []
+    }
+
+    if (mode === 'v1') {
+      // Regex heuristics only — no checker-level T04xx passes
+      if (ext === 'go'  && opts.lspGoEnabled)  return diagnoseGo(code, filename, installed, 'none')
+      if (ext === 'cpp' && opts.lspCppEnabled) return diagnoseCpp(code, filename, false, installed)
+      if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true,  installed)
+      if (ext === 'py')                        return diagnosePy(code, filename)
+      return []
+    }
+
+    if (mode === 'hybrid') {
+      // Checker (diagnoseGo with full T-code analysis) + v2 merged, deduped by position
+      if (ext === 'go' && opts.lspGoEnabled) {
+        const checkerDiags = diagnoseGo(code, filename, installed, level)
+        const v2Diags      = runV2Diagnostics(code, filename, ext, opts)
+        // Deduplicate: skip v2 diag if checker already reported the same line+col+severity
+        const seen = new Set(checkerDiags.map(d => `${d.line}:${d.col}:${d.severity}`))
+        const merged = [...checkerDiags, ...v2Diags.filter(d => !seen.has(`${d.line}:${d.col}:${d.severity}`))]
+        return merged.sort((a, b) => a.line - b.line || a.col - b.col)
+      }
+      if (ext === 'cpp' && opts.lspCppEnabled) return diagnoseCpp(code, filename, false, installed)
+      if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true,  installed)
+      if (ext === 'py')                        return diagnosePy(code, filename)
+      return []
+    }
+
+    // 'checker' mode — full checker with all T-code passes
+    if (ext === 'go'  && opts.lspGoEnabled)  return diagnoseGo(code, filename, installed, level)
     if (ext === 'cpp' && opts.lspCppEnabled) return diagnoseCpp(code, filename, false, installed)
-    if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true, installed)
+    if (ext === 'ino' && opts.lspInoEnabled) return diagnoseCpp(code, filename, true,  installed)
     if (ext === 'py')                        return diagnosePy(code, filename)
   } catch { /* never crash the editor */ }
   return []

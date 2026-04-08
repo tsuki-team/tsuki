@@ -5,8 +5,8 @@
 package check
 
 import (
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -15,11 +15,20 @@ import (
 	"github.com/tsuki/cli/internal/ui"
 )
 
+// errCoreMissing is returned when tsuki-core is not installed.
+var errCoreMissing = errors.New("tsuki-core not found — install it or set core_binary in your config")
+
+// IsCoreMissing reports whether err signals that tsuki-core is not installed.
+// The Cobra command uses this to exit with code 2 instead of 1.
+func IsCoreMissing(err error) bool { return errors.Is(err, errCoreMissing) }
+
 // Options controls the check command.
 type Options struct {
 	Board   string
 	Verbose bool
 	CoreBin string
+	// Mode is the checker strict-mode: "strict" (default), "dev", or "none".
+	Mode string
 }
 
 // Report holds the results of a check run.
@@ -47,14 +56,11 @@ func Run(projectDir string, m *manifest.Manifest, opts Options) (*Report, error)
 
 	transpiler := core.New(opts.CoreBin, opts.Verbose)
 	if !transpiler.Installed() {
-		return nil, fmt.Errorf(
-			"tsuki-core not found — install it or set core_binary in your config",
-		)
+		return nil, errCoreMissing
 	}
 
 	srcDir := filepath.Join(projectDir, "src")
 
-	// Determine which files to check based on the project language.
 	lang := m.EffectiveLanguage()
 	var srcFiles []string
 	var ext, langLabel string
@@ -76,7 +82,6 @@ func Run(projectDir string, m *manifest.Manifest, opts Options) (*Report, error)
 
 	ui.SectionTitle(fmt.Sprintf("Checking %s  [board: %s]", langLabel, board))
 
-	// Convert []manifest.Package -> []string
 	pkgNames := make([]string, 0, len(m.Packages))
 	for _, p := range m.Packages {
 		pkgNames = append(pkgNames, p.Name)
@@ -88,34 +93,25 @@ func Run(projectDir string, m *manifest.Manifest, opts Options) (*Report, error)
 	for _, srcFile := range srcFiles {
 		ui.Info(fmt.Sprintf("Checking %s…", filepath.Base(srcFile)))
 
-		warnings, errors, err := transpiler.CheckFile(
+		warnings, errs, checkErr := transpiler.CheckFile(
 			srcFile,
 			board,
 			lang,
 			libsDir,
 			pkgNames,
+			opts.Mode,
 		)
 
 		for _, w := range warnings {
-			report.Warnings = append(report.Warnings, Issue{
-				File:    srcFile,
-				Message: w,
-				IsError: false,
-			})
+			report.Warnings = append(report.Warnings, Issue{File: srcFile, Message: w})
 		}
-
-		for _, e := range errors {
+		for _, e := range errs {
+			report.Errors = append(report.Errors, Issue{File: srcFile, Message: e, IsError: true})
+		}
+		if checkErr != nil {
 			report.Errors = append(report.Errors, Issue{
 				File:    srcFile,
-				Message: e,
-				IsError: true,
-			})
-		}
-
-		if err != nil {
-			report.Errors = append(report.Errors, Issue{
-				File:    srcFile,
-				Message: err.Error(),
+				Message: checkErr.Error(),
 				IsError: true,
 			})
 		}
@@ -125,6 +121,8 @@ func Run(projectDir string, m *manifest.Manifest, opts Options) (*Report, error)
 }
 
 // PrintReport renders the check report to stdout.
+// Rust-formatted multi-line messages (starting with "error[T…]" / "warning[T…]")
+// are printed verbatim; plain single-line messages use ui.Warn / ui.Fail.
 func PrintReport(report *Report) {
 	fmt.Println()
 
@@ -133,54 +131,62 @@ func PrintReport(report *Report) {
 		return
 	}
 
-	if len(report.Warnings) > 0 {
-		ui.SectionTitle(fmt.Sprintf("Warnings (%d)", len(report.Warnings)))
-		for _, w := range report.Warnings {
-			file := filepath.Base(w.File)
-			if w.Line > 0 {
-				ui.Warn(fmt.Sprintf("%s:%d  %s", file, w.Line, w.Message))
+	printIssue := func(issue Issue) {
+		msg := strings.TrimSpace(issue.Message)
+		if isRustFormatted(msg) {
+			fmt.Println(msg)
+			fmt.Println()
+			return
+		}
+		file := filepath.Base(issue.File)
+		if issue.IsError {
+			if issue.Line > 0 {
+				ui.Fail(fmt.Sprintf("%s:%d  %s", file, issue.Line, msg))
 			} else {
-				ui.Warn(fmt.Sprintf("%s  %s", file, w.Message))
+				ui.Fail(fmt.Sprintf("%s  %s", file, msg))
+			}
+		} else {
+			if issue.Line > 0 {
+				ui.Warn(fmt.Sprintf("%s:%d  %s", file, issue.Line, msg))
+			} else {
+				ui.Warn(fmt.Sprintf("%s  %s", file, msg))
 			}
 		}
 	}
 
-	if len(report.Errors) > 0 {
-		ui.SectionTitle(fmt.Sprintf("Errors (%d)", len(report.Errors)))
-		for _, e := range report.Errors {
-			file := filepath.Base(e.File)
-			if e.Line > 0 {
-				ui.Fail(fmt.Sprintf("%s:%d  %s", file, e.Line, e.Message))
-			} else {
-				ui.Fail(fmt.Sprintf("%s  %s", file, e.Message))
-			}
-		}
-
-		// Rich traceback for errors
-		frames := make([]ui.Frame, 0, len(report.Errors))
-		for _, e := range report.Errors {
-			frames = append(frames, ui.Frame{
-				File: e.File,
-				Line: e.Line,
-				Func: "check",
-				Code: []ui.CodeLine{{Number: e.Line, Text: e.Message, IsPointer: true}},
-			})
-		}
-		if len(frames) > 0 {
-			fmt.Fprintln(os.Stderr, "")
-			ui.Traceback("CheckError", fmt.Sprintf("%d error(s) found", len(report.Errors)), frames)
-		}
+	for _, w := range report.Warnings {
+		printIssue(w)
+	}
+	for _, e := range report.Errors {
+		printIssue(e)
 	}
 
-	// Summary line
+	// Rustc-style summary
 	fmt.Println()
-	summary := fmt.Sprintf("%d file(s) checked — %d error(s), %d warning(s)",
-		report.Files, len(report.Errors), len(report.Warnings))
-	if len(report.Errors) > 0 {
-		ui.Fail(summary)
-	} else {
-		ui.Warn(summary)
+	nErr  := len(report.Errors)
+	nWarn := len(report.Warnings)
+	switch {
+	case nErr > 0 && nWarn > 0:
+		ui.Fail(fmt.Sprintf("error: aborting due to %s; %s emitted",
+			pluralise(nErr, "error"), pluralise(nWarn, "warning")))
+	case nErr > 0:
+		ui.Fail(fmt.Sprintf("error: aborting due to %s", pluralise(nErr, "error")))
+	default:
+		ui.Warn(fmt.Sprintf("%s emitted", pluralise(nWarn, "warning")))
 	}
+}
 
-	_ = strings.TrimSpace
+// isRustFormatted reports whether msg is already in Rust-style diagnostic format.
+func isRustFormatted(msg string) bool {
+	if !strings.Contains(msg, "\n") {
+		return false
+	}
+	return strings.HasPrefix(msg, "error[T") || strings.HasPrefix(msg, "warning[T")
+}
+
+func pluralise(n int, word string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", word)
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }

@@ -100,7 +100,8 @@ func (t *Transpiler) Transpile(req TranspileRequest) (*TranspileResult, error) {
 
 // CheckFile validates a source file without producing output.
 // lang selects the pipeline: "" or "go" for Go, "python" for Python.
-func (t *Transpiler) CheckFile(inputFile, board, lang, libsDir string, pkgNames []string) ([]string, []string, error) {
+// mode controls the checker level: "strict" (default), "dev", or "none".
+func (t *Transpiler) CheckFile(inputFile, board, lang, libsDir string, pkgNames []string, mode string) ([]string, []string, error) {
 	args := []string{inputFile, "--board", board, "--check"}
 	if lang != "" && lang != "go" {
 		args = append(args, "--lang", lang)
@@ -110,6 +111,10 @@ func (t *Transpiler) CheckFile(inputFile, board, lang, libsDir string, pkgNames 
 	}
 	if len(pkgNames) > 0 {
 		args = append(args, "--packages", strings.Join(pkgNames, ","))
+	}
+	// Pass --strict-mode when it differs from the default ("strict").
+	if mode != "" && mode != "strict" {
+		args = append(args, "--strict-mode", mode)
 	}
 
 	cmd := exec.Command(t.binary, args...)
@@ -132,7 +137,7 @@ func (t *Transpiler) CheckFile(inputFile, board, lang, libsDir string, pkgNames 
 // Check validates a .go source file without producing output.
 // Deprecated: use CheckFile with lang="" for Go projects.
 func (t *Transpiler) Check(inputFile, board, libsDir string, pkgNames []string) ([]string, []string, error) {
-	return t.CheckFile(inputFile, board, "go", libsDir, pkgNames)
+	return t.CheckFile(inputFile, board, "go", libsDir, pkgNames, "")
 }
 
 

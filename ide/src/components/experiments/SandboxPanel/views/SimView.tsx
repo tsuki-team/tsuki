@@ -295,6 +295,10 @@ export default function SimView(props: SimViewProps) {
   const sourceContent  = mainTab?.content  ?? diskContent  ?? ''
   const sourceFileName = mainTab?.name     ?? diskFileName ?? null
 
+  // ── Breakpoints ───────────────────────────────────────────────────────────
+  const allBreakpoints = settings.breakpoints ?? {}
+  const simBreakpoints = (allBreakpoints[mainTab?.fileId ?? ''] ?? []).sort((a, b) => a - b)
+
   const analogPins  = getAnalogInputPins(circuit)
   const digitalPins = getDigitalInputPins(circuit)
 
@@ -337,6 +341,16 @@ export default function SimView(props: SimViewProps) {
         </button>
 
         <div className="flex-1" />
+
+        {simBreakpoints.length > 0 && (
+          <span
+            title={`Breakpoints: lines ${simBreakpoints.join(', ')}`}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-mono"
+            style={{ background: 'rgba(239,68,68,0.1)', color: 'rgba(239,68,68,0.8)', border: '1px solid rgba(239,68,68,0.2)' }}
+          >
+            ● {simBreakpoints.length}
+          </span>
+        )}
 
         {sourceFileName ? (
           <span className="text-[10px] text-[var(--ok)] flex items-center gap-1">

@@ -1613,11 +1613,106 @@ import { fetchBoardRegistry, type RegistryBoard } from '@/lib/boardPackages'
 import BoardInstallModal from '@/components/other/BoardInstallModal'
 import type { BoardPlatform } from '@/lib/store'
 
+/** A board support package as shown in the Packages tab install UI. */
+interface BoardPkg {
+  id:               string
+  name:             string
+  version:          string
+  size:             string
+  desc:             string
+  arch:             string
+  iconName:         string
+  boards:           string[]
+  precompileScript: string[]
+}
+
+const BOARD_PACKAGES: BoardPkg[] = [
+  {
+    id: 'avr',
+    name: 'Arduino AVR Boards',
+    version: '1.8.6',
+    size: '34 MB',
+    desc: 'Support for Uno, Nano, Mega, Leonardo, Micro and all ATmega-based boards. Includes avr-gcc toolchain and precompiled Arduino core.',
+    arch: 'avr',
+    iconName: 'chip',
+    boards: ['uno', 'nano', 'mega', 'leonardo', 'micro', 'nano_old', 'pro_mini_5v', 'pro_mini_3v3'],
+    precompileScript: [
+      '[core] Resolving AVR toolchain…',
+      '[core] Downloading avr-gcc 7.3.0…',
+      '[core] Extracting toolchain (34 MB)…',
+      '[tsuki-flash] Precompiling Arduino core for atmega328p…',
+      '[tsuki-flash] Precompiling Arduino core for atmega2560…',
+      '[tsuki-flash] Precompiling Arduino core for atmega32u4…',
+      '[cache] Writing precompiled cache…',
+      '[tsuki-flash] ✓ AVR core ready  ',
+    ],
+  },
+  {
+    id: 'esp32',
+    name: 'ESP32 Boards',
+    version: '2.0.14',
+    size: '156 MB',
+    desc: 'Support for ESP32 Dev Module, ESP32-S2, ESP32-S3 and ESP32-C3. Includes xtensa-gcc and RISC-V toolchain.',
+    arch: 'esp32',
+    iconName: 'wifi',
+    boards: ['esp32', 'esp32s2', 'esp32c3'],
+    precompileScript: [
+      '[core] Resolving ESP32 toolchain…',
+      '[core] Downloading xtensa-esp32-elf-gcc…',
+      '[core] Downloading riscv32-esp-elf-gcc…',
+      '[core] Extracting toolchains (156 MB)…',
+      '[tsuki-flash] Precompiling Arduino core for esp32…',
+      '[tsuki-flash] Precompiling Arduino core for esp32s2…',
+      '[tsuki-flash] Precompiling Arduino core for esp32c3…',
+      '[cache] Writing precompiled cache…',
+      '[tsuki-flash] ✓ ESP32 core ready  ',
+    ],
+  },
+  {
+    id: 'esp8266',
+    name: 'ESP8266 Boards',
+    version: '3.1.2',
+    size: '88 MB',
+    desc: 'Support for ESP8266 NodeMCU, Lolin D1 Mini, and other ESP8266EX boards.',
+    arch: 'esp8266',
+    iconName: 'wifi',
+    boards: ['esp8266', 'nodemcu', 'lolin_d1_mini'],
+    precompileScript: [
+      '[core] Resolving ESP8266 toolchain…',
+      '[core] Downloading xtensa-lx106-elf-gcc…',
+      '[core] Extracting toolchain (88 MB)…',
+      '[tsuki-flash] Precompiling Arduino core for esp8266…',
+      '[cache] Writing precompiled cache…',
+      '[tsuki-flash] ✓ ESP8266 core ready  ',
+    ],
+  },
+  {
+    id: 'rp2040',
+    name: 'RP2040 Boards',
+    version: '3.9.4',
+    size: '218 MB',
+    desc: 'Support for Raspberry Pi Pico and other RP2040-based boards. Includes arm-none-eabi-gcc and Pico SDK.',
+    arch: 'rp2040',
+    iconName: 'cpu',
+    boards: ['pico'],
+    precompileScript: [
+      '[core] Resolving RP2040 toolchain…',
+      '[core] Downloading arm-none-eabi-gcc 12.2…',
+      '[core] Downloading Pico SDK 1.5.1…',
+      '[core] Extracting toolchain (218 MB)…',
+      '[tsuki-flash] Precompiling Arduino core for rp2040…',
+      '[cache] Writing precompiled cache…',
+      '[tsuki-flash] ✓ RP2040 core ready  ',
+    ],
+  },
+]
+
 // Map arch/icon strings to lucide icons
-function PkgIcon({ arch, type: pkgType, size = 16 }: { arch?: string; type?: string; size?: number }) {
+function PkgIcon({ arch, name, type: pkgType, size = 16 }: { arch?: string; name?: string; type?: string; size?: number }) {
   if (pkgType === 'lib') return <Package size={size} />
-  if (arch?.startsWith('esp')) return <Wifi size={size} />
-  if (arch === 'rp2040') return <CpuIcon size={size} />
+  const src = arch ?? name ?? ''
+  if (src.startsWith('esp') || src === 'wifi') return <Wifi size={size} />
+  if (src === 'rp2040' || src === 'cpu') return <CpuIcon size={size} />
   return <CircuitBoard size={size} />
 }
 
@@ -1636,8 +1731,6 @@ function PkgCard({
   onInstall: () => void
   onRemove:  () => void
 }) {
-  const isLib = entry.type === 'lib'
-
   return (
     <div className={clsx(
       'rounded-lg border transition-colors',
@@ -1660,13 +1753,8 @@ function PkgCard({
               v{entry.latest}
             </span>
             {/* type badge */}
-            <span className={clsx(
-              'text-[9px] font-mono px-1.5 py-0.5 rounded border',
-              isLib
-                ? 'text-[var(--info)] border-[color-mix(in_srgb,var(--info)_25%,transparent)] bg-[color-mix(in_srgb,var(--info)_8%,transparent)]'
-                : 'text-[var(--fg-faint)] border-[var(--border)] bg-[var(--surface-3)]',
-            )}>
-              {isLib ? 'lib' : 'board'}
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border text-[var(--fg-faint)] border-[var(--border)] bg-[var(--surface-3)]">
+              board
             </span>
             {installed && (
               <span className="text-[9px] font-mono text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)] px-1.5 py-0.5 rounded">
@@ -1699,10 +1787,10 @@ function PkgCard({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BoardPkgInstallModal
+//  RegistryBoardInstallModal
 // ─────────────────────────────────────────────────────────────────────────────
 
-function BoardPkgInstallModal({
+function RegistryBoardInstallModal({
   pkg,
   onClose,
   onInstalled,
@@ -1941,10 +2029,10 @@ function BoardPkgInstallModal({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BoardPkgCard
+//  RegistryBoardCard
 // ─────────────────────────────────────────────────────────────────────────────
 
-function BoardPkgCard({
+function RegistryBoardCard({
   pkg,
   installed,
   onInstall,
@@ -2027,19 +2115,19 @@ function PackagesTab() {
   const [installTarget, setInstallTarget] = useState<BoardPkg | null>(null)
   const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
 
-  const installed: string[] = settings.installedBoardPkgs ?? []
+  const installed: string[] = settings.installedRegistryBoards ?? []
 
   function isInstalled(id: string) { return installed.includes(id) }
 
   function handleInstalled(id: string) {
     if (!installed.includes(id)) {
-      updateSetting('installedBoardPkgs', [...installed, id])
+      updateSetting('installedRegistryBoards', [...installed, id])
     }
     setInstallTarget(null)
   }
 
   function handleRemove(id: string) {
-    updateSetting('installedBoardPkgs', installed.filter(i => i !== id))
+    updateSetting('installedRegistryBoards', installed.filter(i => i !== id))
     setRemoveConfirm(null)
   }
 
@@ -2113,7 +2201,7 @@ function PackagesTab() {
               </div>
             </div>
           ) : (
-            <BoardPkgCard
+            <RegistryBoardCard
               key={pkg.id}
               pkg={pkg}
               installed={isInstalled(pkg.id)}
@@ -2244,7 +2332,7 @@ function PackagesTab() {
 
       {/* Install modal */}
       {installTarget && (
-        <BoardPkgInstallModal
+        <RegistryBoardInstallModal
           pkg={installTarget}
           onClose={() => setInstallTarget(null)}
           onInstalled={handleInstalled}
@@ -2443,278 +2531,604 @@ function LanguageTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  LSP experiment tab
+//  LSP experiment tab — collapsible side-nav layout
 // ─────────────────────────────────────────────────────────────────────────────
+
+const LSP_NAV_SECTIONS = [
+  { id: 'overview',  label: 'Overview',  icon: <Zap size={13} /> },
+  { id: 'engine',    label: 'Engine',    icon: <Cpu size={13} /> },
+  { id: 'checker',   label: 'Checker',   icon: <Shield size={13} /> },
+  { id: 'languages', label: 'Languages', icon: <Languages size={13} /> },
+  { id: 'libraries', label: 'Libraries', icon: <Package size={13} /> },
+  { id: 'reference', label: 'Reference', icon: <FileText size={13} /> },
+] as const
+
+type LspSection = (typeof LSP_NAV_SECTIONS)[number]['id']
+
+const ENGINE_MODES = [
+  {
+    id: 'none' as const,
+    label: 'None',
+    desc: 'Diagnostics disabled — editor runs without any analysis.',
+    badge: null,
+  },
+  {
+    id: 'v1' as const,
+    label: 'Regex (v1)',
+    desc: 'Fast regex-based heuristics. Catches structural issues like missing braces, bad imports, and setup()/loop() checks.',
+    badge: 'lightweight',
+  },
+  {
+    id: 'v2' as const,
+    label: 'Token-stream (v2)',
+    desc: 'Token-stream + scope analysis. Detects undefined symbols, arity mismatches, type hints, and write-only variables.',
+    badge: 'recommended',
+  },
+  {
+    id: 'hybrid' as const,
+    label: 'Hybrid',
+    desc: 'Checker + v2: full T-code analysis merged with token-stream diagnostics. Best accuracy with complete coverage.',
+    badge: 'default',
+  },
+  {
+    id: 'checker' as const,
+    label: 'Checker (Rust)',
+    desc: 'Invoke tsuki-core\'s Rust checker via Tauri. Highest accuracy — slower. For checker-only mode, not real-time.',
+    badge: 'accurate',
+  },
+]
+
+const CHECKER_LEVELS = [
+  { id: 'none'   as const, label: 'None',   desc: 'All checks disabled.' },
+  { id: 'dev'    as const, label: 'Dev',    desc: 'Common issues: T0001–T0011, T0300–T0302.' },
+  { id: 'strict' as const, label: 'Strict', desc: 'Full analysis including memory safety (T04xx) and all domain checks.' },
+]
+
+const T_CODES: { code: string; sev: 'error' | 'warn'; desc: string; mode: string }[] = [
+  { code: 'T0001', sev: 'error', desc: 'Missing setup() or loop() function',          mode: 'Dev+' },
+  { code: 'T0002', sev: 'error', desc: 'Mismatched braces / brackets',                mode: 'Dev+' },
+  { code: 'T0003', sev: 'error', desc: 'Missing arduino import',                      mode: 'Dev+' },
+  { code: 'T0004', sev: 'warn',  desc: 'Unreachable code after return/break',         mode: 'Dev+' },
+  { code: 'T0005', sev: 'error', desc: 'Not all code paths return a value',           mode: 'Dev+' },
+  { code: 'T0006', sev: 'error', desc: 'Undefined identifier',                        mode: 'Dev+' },
+  { code: 'T0007', sev: 'error', desc: 'Wrong number of arguments (arity mismatch)',  mode: 'Dev+' },
+  { code: 'T0008', sev: 'error', desc: 'Type mismatch in assignment or call',         mode: 'Dev+' },
+  { code: 'T0009', sev: 'warn',  desc: 'Empty function body',                         mode: 'Dev+' },
+  { code: 'T0010', sev: 'error', desc: 'Duplicate declaration in same scope',         mode: 'Dev+' },
+  { code: 'T0011', sev: 'warn',  desc: 'Write-only variable (never read)',            mode: 'Dev+' },
+  { code: 'T0012', sev: 'warn',  desc: 'Variable shadows outer scope (2+ levels)',    mode: 'Dev+' },
+  { code: 'T0013', sev: 'error', desc: 'Variable possibly used before assignment',    mode: 'Dev+' },
+  { code: 'T0101', sev: 'warn',  desc: 'Potential infinite loop (no break/return)',   mode: 'Dev+' },
+  { code: 'T0102', sev: 'warn',  desc: 'Code after return in same block',             mode: 'Dev+' },
+  { code: 'T0300', sev: 'error', desc: 'Serial used before Serial.Begin()',           mode: 'Dev+' },
+  { code: 'T0301', sev: 'warn',  desc: 'analogRead/Write on digital-only pin',        mode: 'Dev+' },
+  { code: 'T0302', sev: 'warn',  desc: 'AnalogWrite on non-PWM pin',                  mode: 'Dev+' },
+  { code: 'T0303', sev: 'warn',  desc: 'digitalRead/Write without prior pinMode()',   mode: 'Dev+' },
+  { code: 'T0304', sev: 'warn',  desc: 'delay() inside interrupt handler',            mode: 'Dev+' },
+  { code: 'T0400', sev: 'warn',  desc: 'String concat in loop (heap frag on AVR)',    mode: 'Strict/AVR' },
+  { code: 'T0401', sev: 'warn',  desc: 'malloc/new without free/delete',              mode: 'Strict' },
+  { code: 'T0402', sev: 'warn',  desc: 'Global String variable (prefer const char*)', mode: 'Strict/AVR' },
+  { code: 'T0403', sev: 'error', desc: 'Stack array > 64 bytes on AVR',               mode: 'Strict/AVR' },
+]
 
 function LspExpTab() {
   const { settings, updateSetting } = useStore()
   const lspOn = settings.lspEnabled
 
+  const [navCollapsed, setNavCollapsed] = useState(false)
+  const [activeSection, setActiveSection] = useState<LspSection>('overview')
+  const [codesExpanded, setCodesExpanded] = useState(false)
+  const [suppressInput, setSuppressInput] = useState('')
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // Scroll to section on nav click
+  function scrollTo(id: LspSection) {
+    setActiveSection(id)
+    const el = contentRef.current?.querySelector(`[data-section="${id}"]`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // Track active section via IntersectionObserver (root: null → viewport scroller)
+  useEffect(() => {
+    const container = contentRef.current
+    if (!container) return
+    const sections = Array.from(container.querySelectorAll('[data-section]'))
+    const obs = new IntersectionObserver(
+      entries => {
+        const visible = entries.filter(e => e.isIntersecting)
+        if (visible.length > 0) {
+          const top = visible.reduce((a, b) =>
+            a.boundingClientRect.top < b.boundingClientRect.top ? a : b
+          )
+          setActiveSection((top.target as HTMLElement).dataset.section as LspSection)
+        }
+      },
+      { root: null, rootMargin: '-10% 0px -60% 0px', threshold: 0 }
+    )
+    sections.forEach(s => obs.observe(s))
+    return () => obs.disconnect()
+  }, [])
+
+  const suppressedCodes = settings.lspSuppressedCodes ?? []
+
+  function addSuppressCode() {
+    const code = suppressInput.trim().toUpperCase()
+    if (!code || suppressedCodes.includes(code)) { setSuppressInput(''); return }
+    updateSetting('lspSuppressedCodes', [...suppressedCodes, code])
+    setSuppressInput('')
+  }
+
   return (
-    <div>
-      {/* ── Header ── */}
-      <div className="flex items-start gap-3 mb-7">
-        <div className="w-10 h-10 rounded-lg border border-[var(--border)] flex items-center justify-center flex-shrink-0">
-          <Zap size={18} className="text-[var(--fg-muted)]" />
-        </div>
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h2 className="text-lg font-semibold tracking-tight">Language Server (LSP)</h2>
-            <span className={clsx(
-              'text-xs font-mono px-1.5 py-0.5 rounded',
-              lspOn ? 'text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)]' : 'text-[var(--fg-faint)] bg-[var(--surface-3)]'
-            )}>
+    <div className="flex gap-5 items-start">
+      {/* ── Sticky side nav ── */}
+      <div className={clsx(
+        'flex-shrink-0 sticky top-0 flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] transition-all duration-150 overflow-hidden',
+        navCollapsed ? 'w-9' : 'w-36'
+      )}>
+        {/* Collapse toggle */}
+        <button
+          onClick={() => setNavCollapsed(c => !c)}
+          className="flex items-center justify-center h-8 border-b border-[var(--border)] text-[var(--fg-faint)] hover:text-[var(--fg)] hover:bg-[var(--hover)] transition-colors cursor-pointer"
+          title={navCollapsed ? 'Expand nav' : 'Collapse nav'}
+        >
+          <ChevronRight size={11} className={clsx('transition-transform duration-150', navCollapsed ? '' : 'rotate-180')} />
+        </button>
+
+        {/* Nav items */}
+        <nav className="flex flex-col py-1 gap-0.5 px-1">
+          {LSP_NAV_SECTIONS.map(sec => (
+            <button
+              key={sec.id}
+              onClick={() => scrollTo(sec.id)}
+              title={navCollapsed ? sec.label : undefined}
+              className={clsx(
+                'flex items-center gap-2 rounded px-2 py-1.5 text-left transition-colors cursor-pointer w-full',
+                activeSection === sec.id
+                  ? 'bg-[var(--active)] text-[var(--fg)]'
+                  : 'text-[var(--fg-muted)] hover:bg-[var(--hover)] hover:text-[var(--fg)]'
+              )}
+            >
+              <span className="flex-shrink-0">{sec.icon}</span>
+              {!navCollapsed && <span className="text-[11px] font-medium truncate">{sec.label}</span>}
+            </button>
+          ))}
+        </nav>
+
+        {/* LSP status dot */}
+        <div className="border-t border-[var(--border)] px-2 py-2 flex items-center gap-2">
+          <span className={clsx(
+            'w-1.5 h-1.5 rounded-full flex-shrink-0',
+            lspOn ? 'bg-[var(--ok)]' : 'bg-[var(--fg-faint)]'
+          )} />
+          {!navCollapsed && (
+            <span className="text-[10px] font-mono text-[var(--fg-faint)] truncate">
               {lspOn ? 'active' : 'inactive'}
             </span>
-            <span className="text-[9px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">α</span>
-          </div>
-          <p className="text-sm text-[var(--fg-muted)]">
-            Real-time diagnostics, squiggle underlines, hover docs and smart library detection — powered by{' '}
-            <code className="font-mono text-[var(--fg)] bg-[var(--surface-3)] px-1 rounded text-xs">tsuki-lsp</code>.
-            Supports Go, C++ and <code className="font-mono text-[var(--fg)] bg-[var(--surface-3)] px-1 rounded text-xs">.ino</code>.
-          </p>
+          )}
         </div>
       </div>
 
-      {/* ── Master switch ── */}
-      <GroupHeader title="Master switch" />
-      <SettingsField name="Enable LSP" desc="Start the tsuki-lsp background process when a project is opened. Required for all features below.">
-        <Toggle on={lspOn} onToggle={() => updateSetting('lspEnabled', !lspOn)} />
-      </SettingsField>
+      {/* ── Content ── */}
+      <div ref={contentRef} className="flex-1 min-w-0 space-y-10">
 
-      {/* ── tsuki-lsp binary path ── */}
-      <GroupHeader title="Binary" />
-      <SettingsField name="tsuki-lsp path" desc="Path to the tsuki-lsp binary. Leave blank to auto-detect from PATH or next to tsuki-core.">
-        <div className="flex items-center gap-1.5">
-          <input
-            value={settings.lspPath ?? ''}
-            onChange={e => updateSetting('lspPath', e.target.value)}
-            placeholder="auto (tsuki-lsp)"
-            disabled={!lspOn}
-            className="flex-1 bg-[var(--surface)] border border-[var(--border)] rounded px-2 py-1 text-xs text-[var(--fg)] outline-none font-mono disabled:opacity-40"
-          />
-        </div>
-      </SettingsField>
-
-      {/* ── Editor features ── */}
-      <GroupHeader title="Editor features" />
-      <SettingsField name="Real-time diagnostics" desc="Underline errors and warnings as you type with wavy squiggle decorations.">
-        <Toggle
-          on={lspOn && settings.lspDiagnosticsEnabled}
-          onToggle={() => updateSetting('lspDiagnosticsEnabled', !settings.lspDiagnosticsEnabled)}
-        />
-      </SettingsField>
-      <SettingsField name="Completions" desc="Show inline code completion suggestions while typing.">
-        <div className="flex items-center gap-2">
-          <Toggle
-            on={lspOn && settings.lspCompletionsEnabled}
-            onToggle={() => updateSetting('lspCompletionsEnabled', !settings.lspCompletionsEnabled)}
-          />
-          <span className="text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">soon</span>
-        </div>
-      </SettingsField>
-      <SettingsField name="Hover documentation" desc="Show type info and symbol docs when hovering over a token in the editor.">
-        <div className="flex items-center gap-2">
-          <Toggle
-            on={lspOn && settings.lspHoverEnabled}
-            onToggle={() => updateSetting('lspHoverEnabled', !settings.lspHoverEnabled)}
-          />
-          <span className="text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">soon</span>
-        </div>
-      </SettingsField>
-      <SettingsField name="Signature help" desc="Show function signature and parameter hints while typing a function call.">
-        <div className="flex items-center gap-2">
-          <Toggle
-            on={lspOn && settings.lspSignatureHelp}
-            onToggle={() => updateSetting('lspSignatureHelp', !settings.lspSignatureHelp)}
-          />
-          <span className="text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">soon</span>
-        </div>
-      </SettingsField>
-      <SettingsField name="Inlay hints" desc="Show inferred type annotations inline in the code (e.g. variable types, return types).">
-        <div className="flex items-center gap-2">
-          <Toggle
-            on={lspOn && settings.lspInlayHints}
-            onToggle={() => updateSetting('lspInlayHints', !settings.lspInlayHints)}
-          />
-          <span className="text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">soon</span>
-        </div>
-      </SettingsField>
-
-      {/* ── Diagnostic timing ── */}
-      <GroupHeader title="Diagnostics" />
-      <SettingsField
-        name="Diagnostic delay"
-        desc="How long (in ms) to wait after you stop typing before running diagnostics. Lower = faster, higher = less CPU load."
-      >
-        <div className="flex items-center gap-3">
-          <input
-            type="range" min={200} max={2000} step={100}
-            value={settings.lspDiagnosticDelay ?? 600}
-            onChange={e => updateSetting('lspDiagnosticDelay', Number(e.target.value))}
-            disabled={!lspOn}
-            className="flex-1 accent-[var(--fg)] disabled:opacity-40"
-          />
-          <span className="text-xs font-mono w-14 text-right text-[var(--fg-muted)]">
-            {settings.lspDiagnosticDelay ?? 600} ms
-          </span>
-        </div>
-      </SettingsField>
-
-      {/* ── Per-language toggles ── */}
-      <GroupHeader title="Language support" />
-      <div className="mt-3 flex flex-col gap-2 mb-2">
-        {[
-          {
-            key: 'lspGoEnabled' as const,
-            lang: 'Go (.go)',
-            icon: '🐹',
-            badge: 'full support',
-            badgeColor: 'text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)]',
-            note: 'Transpiler-aware diagnostics — detects missing arduino imports, unused packages, brace balance, setup()/loop() checks.',
-          },
-          {
-            key: 'lspCppEnabled' as const,
-            lang: 'C++ (.cpp)',
-            icon: '⚙️',
-            badge: 'partial',
-            badgeColor: 'text-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)]',
-            note: '#include library detection, assignment-in-condition warnings, and missing void setup()/loop() in .cpp sketches.',
-          },
-          {
-            key: 'lspInoEnabled' as const,
-            lang: 'Arduino (.ino)',
-            icon: '🔌',
-            badge: 'partial',
-            badgeColor: 'text-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)]',
-            note: 'Treated as C++ with Arduino.h auto-injected. Same library detection and structural checks as C++.',
-          },
-        ].map(({ key, lang, icon, badge, badgeColor, note }) => (
-          <div key={key} className={clsx(
-            'rounded-lg border transition-colors',
-            settings[key] && lspOn ? 'border-[var(--fg-faint)] bg-[var(--surface-1)]' : 'border-[var(--border)] bg-[var(--surface-1)]',
-          )}>
-            <div className="flex items-center gap-3 px-4 py-3">
-              <span className="text-xl leading-none flex-shrink-0">{icon}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                  <span className="text-sm font-medium text-[var(--fg)]">{lang}</span>
-                  <span className={clsx('text-[9px] font-mono px-1.5 py-0.5 rounded', badgeColor)}>{badge}</span>
-                </div>
-                <p className="text-xs text-[var(--fg-muted)] leading-relaxed">{note}</p>
+        {/* ══ OVERVIEW ══════════════════════════════════════════════════════ */}
+        <section data-section="overview">
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-9 h-9 rounded-lg border border-[var(--border)] flex items-center justify-center flex-shrink-0">
+              <Zap size={16} className="text-[var(--fg-muted)]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <h2 className="text-base font-semibold tracking-tight">Language Server</h2>
+                <span className={clsx(
+                  'text-[10px] font-mono px-1.5 py-0.5 rounded',
+                  lspOn ? 'text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)]' : 'text-[var(--fg-faint)] bg-[var(--surface-3)]'
+                )}>{lspOn ? 'active' : 'inactive'}</span>
+                <span className="text-[9px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">α</span>
               </div>
-              <Toggle
-                on={lspOn && settings[key]}
-                onToggle={() => updateSetting(key, !settings[key])}
-              />
+              <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
+                Real-time diagnostics, squiggles, hover docs and library detection — powered by{' '}
+                <code className="font-mono text-[var(--fg)] bg-[var(--surface-3)] px-1 rounded">tsuki-lsp</code>.
+              </p>
             </div>
           </div>
-        ))}
-      </div>
 
-      {/* ── Library management ── */}
-      <GroupHeader title="Library management" />
-      <SettingsField
-        name="Show library install prompt"
-        desc="When an import is detected that isn't installed, show a popup offering to download it."
-      >
-        <Toggle
-          on={settings.lspShowLibPrompt}
-          onToggle={() => updateSetting('lspShowLibPrompt', !settings.lspShowLibPrompt)}
-        />
-      </SettingsField>
-      <SettingsField
-        name="Auto-download missing libraries"
-        desc="Silently run 'tsuki pkg add <lib>' in the background when a missing import is detected — no prompt shown."
-      >
-        <Toggle
-          on={settings.lspAutoDownloadLibs}
-          onToggle={() => updateSetting('lspAutoDownloadLibs', !settings.lspAutoDownloadLibs)}
-        />
-      </SettingsField>
+          {/* Master switch */}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)]">
+            <div className="flex items-center gap-4 px-4 py-3">
+              <div className="flex-1">
+                <div className="text-sm font-medium">Enable LSP</div>
+                <div className="text-xs text-[var(--fg-muted)] mt-0.5">
+                  Start the tsuki-lsp background process. Required for all features.
+                </div>
+              </div>
+              <Toggle on={lspOn} onToggle={() => updateSetting('lspEnabled', !lspOn)} />
+            </div>
 
-      {/* Ignored libs list */}
-      {(settings.lspIgnoredLibs?.length ?? 0) > 0 && (
-        <>
-          <SettingsField
-            name="Ignored libraries"
-            desc={`${settings.lspIgnoredLibs.length} librar${settings.lspIgnoredLibs.length === 1 ? 'y' : 'ies'} suppressed from the install prompt.`}
-          >
-            <Btn
-              variant="danger"
-              size="xs"
-              onClick={() => updateSetting('lspIgnoredLibs', [])}
-            >
-              Clear all
-            </Btn>
-          </SettingsField>
-          <div className="mt-1 mb-4 flex flex-wrap gap-1.5 px-1">
-            {settings.lspIgnoredLibs.map(lib => (
-              <div key={lib} className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-1)]">
-                {lib}
+          </div>
+
+          <div className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-[color-mix(in_srgb,var(--warn)_5%,transparent)] border border-[color-mix(in_srgb,var(--warn)_15%,transparent)]">
+            <AlertTriangle size={12} className="mt-0.5 text-[var(--warn)] flex-shrink-0" />
+            <p className="text-[11px] text-[var(--fg-muted)] leading-relaxed">
+              Alpha feature. Completions, hover and signature help require <code className="font-mono bg-[var(--surface-3)] px-0.5 rounded">tsuki-lsp</code>.
+              Front-end diagnostics work without it.
+            </p>
+          </div>
+        </section>
+
+        {/* ══ ENGINE ════════════════════════════════════════════════════════ */}
+        <section data-section="engine">
+          <div className="flex items-center gap-2 mb-4">
+            <Cpu size={14} className="text-[var(--fg-muted)]" />
+            <h3 className="text-sm font-semibold tracking-tight">Diagnostic engine</h3>
+          </div>
+
+          <div className="flex flex-col gap-1.5 mb-5">
+            {ENGINE_MODES.map(mode => {
+              const active = (settings.lspMode ?? 'hybrid') === mode.id
+              return (
                 <button
-                  onClick={() => updateSetting('lspIgnoredLibs', settings.lspIgnoredLibs.filter(l => l !== lib))}
-                  className="ml-0.5 hover:text-[var(--fg)] cursor-pointer border-0 bg-transparent leading-none"
+                  key={mode.id}
+                  onClick={() => updateSetting('lspMode', mode.id)}
+                  className={clsx(
+                    'w-full text-left rounded-lg border px-4 py-3 transition-colors cursor-pointer',
+                    active
+                      ? 'border-[var(--fg-faint)] bg-[var(--surface-2)]'
+                      : 'border-[var(--border)] bg-[var(--surface-1)] hover:bg-[var(--hover)]'
+                  )}
                 >
-                  ×
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-xs font-semibold text-[var(--fg)]">{mode.label}</span>
+                    {mode.badge && (
+                      <span className={clsx(
+                        'text-[9px] font-mono px-1.5 py-0.5 rounded',
+                        mode.badge === 'default' || mode.badge === 'recommended'
+                          ? 'text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)]'
+                          : 'text-[var(--fg-faint)] bg-[var(--surface-3)]'
+                      )}>{mode.badge}</span>
+                    )}
+                    {active && <Check size={11} className="ml-auto text-[var(--fg-muted)]" />}
+                  </div>
+                  <p className="text-[11px] text-[var(--fg-muted)] leading-relaxed">{mode.desc}</p>
                 </button>
+              )
+            })}
+          </div>
+
+          {/* Diagnostic timing */}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3">
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <div className="text-sm font-medium">Debounce delay</div>
+                <div className="text-xs text-[var(--fg-muted)] mt-0.5">
+                  Wait this long after typing stops before running diagnostics.
+                </div>
+              </div>
+              <div className="flex items-center gap-3 w-48">
+                <input
+                  type="range" min={200} max={2000} step={100}
+                  value={settings.lspDiagnosticDelay ?? 600}
+                  onChange={e => updateSetting('lspDiagnosticDelay', Number(e.target.value))}
+                  disabled={!lspOn}
+                  className="flex-1 accent-[var(--fg)] disabled:opacity-40"
+                />
+                <span className="text-xs font-mono w-12 text-right text-[var(--fg-muted)]">
+                  {settings.lspDiagnosticDelay ?? 600} ms
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Editor feature toggles */}
+          <div className="mt-4 grid grid-cols-2 gap-1.5">
+            {([
+              { key: 'lspDiagnosticsEnabled' as const, label: 'Diagnostics',    soon: false },
+              { key: 'lspCompletionsEnabled'  as const, label: 'Completions',    soon: true  },
+              { key: 'lspHoverEnabled'         as const, label: 'Hover docs',     soon: true  },
+              { key: 'lspSignatureHelp'        as const, label: 'Signature help', soon: true  },
+              { key: 'lspInlayHints'           as const, label: 'Inlay hints',    soon: true  },
+            ]).map(({ key, label, soon }) => (
+              <div key={key} className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-[var(--fg)]">{label}</span>
+                  {soon && <span className="text-[9px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1 rounded">soon</span>}
+                </div>
+                <Toggle
+                  on={lspOn && settings[key]}
+                  onToggle={() => updateSetting(key, !settings[key])}
+                />
               </div>
             ))}
           </div>
-        </>
-      )}
+        </section>
 
-      {/* ── Supported library registry ── */}
-      <GroupHeader title="Known library registry" />
-      <p className="text-xs text-[var(--fg-muted)] mb-3 leading-relaxed">
-        Libraries tsuki-lsp can detect and offer to install automatically.
-      </p>
-      <div className="grid grid-cols-2 gap-1.5 mb-6">
-        {[
-          ['Servo', 'Servo motor control'],
-          ['Wire', 'I²C / TWI protocol'],
-          ['SPI', 'Serial Peripheral Interface'],
-          ['Adafruit_NeoPixel', 'WS2812 LED strips'],
-          ['DHT', 'Temperature & humidity'],
-          ['IRremote', 'Infrared send/receive'],
-          ['ArduinoJson', 'JSON parsing'],
-          ['FastLED', 'High-perf LED driver'],
-          ['U8g2', 'OLED / LCD displays'],
-          ['PubSubClient', 'MQTT client'],
-          ['OneWire', 'Dallas 1-Wire protocol'],
-          ['Adafruit_SSD1306', 'SSD1306 OLED'],
-        ].map(([name, desc]) => (
-          <div key={name} className="flex items-center gap-2 px-2.5 py-2 rounded border border-[var(--border)] bg-[var(--surface-1)]">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-            <div className="min-w-0">
-              <div className="text-xs font-mono font-medium text-[var(--fg)] truncate">{name}</div>
-              <div className="text-[10px] text-[var(--fg-faint)] truncate">{desc}</div>
+        {/* ══ CHECKER ═══════════════════════════════════════════════════════ */}
+        <section data-section="checker">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield size={14} className="text-[var(--fg-muted)]" />
+            <h3 className="text-sm font-semibold tracking-tight">Checker (tsuki-core)</h3>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] mb-3">
+            <div className="flex items-center gap-4 px-4 py-3 border-b border-[var(--border-subtle)]">
+              <div className="flex-1">
+                <div className="text-sm font-medium">Enable Rust checker</div>
+                <div className="text-xs text-[var(--fg-muted)] mt-0.5">
+                  Invoke <code className="font-mono bg-[var(--surface-3)] px-0.5 rounded text-[11px]">tsuki-core</code> for
+                  deep semantic analysis. Slower than v2 — best for checker-only mode.
+                </div>
+              </div>
+              <Toggle
+                on={settings.checkerEnabled ?? false}
+                onToggle={() => updateSetting('checkerEnabled', !(settings.checkerEnabled ?? false))}
+              />
+            </div>
+            <div className="px-4 py-3">
+              <div className="text-xs font-medium text-[var(--fg-muted)] mb-2">Strictness level</div>
+              <div className="flex gap-2">
+                {CHECKER_LEVELS.map(lvl => (
+                  <button
+                    key={lvl.id}
+                    onClick={() => updateSetting('checkerLevel', lvl.id)}
+                    disabled={!(settings.checkerEnabled ?? false)}
+                    className={clsx(
+                      'flex-1 rounded border px-3 py-2 text-left transition-colors cursor-pointer disabled:opacity-40',
+                      (settings.checkerLevel ?? 'strict') === lvl.id
+                        ? 'border-[var(--fg-faint)] bg-[var(--surface-2)]'
+                        : 'border-[var(--border)] hover:bg-[var(--hover)]'
+                    )}
+                  >
+                    <div className="text-xs font-semibold text-[var(--fg)]">{lvl.label}</div>
+                    <div className="text-[10px] text-[var(--fg-faint)] mt-0.5">{lvl.desc}</div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        ))}
-      </div>
 
-      {/* ── Requirements ── */}
-      <GroupHeader title="Requirements" />
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 mb-4">
-        <div className="flex items-start gap-3">
-          <Zap size={14} className="mt-0.5 text-[var(--fg-faint)] flex-shrink-0" />
-          <div>
-            <div className="font-medium text-[var(--fg)] text-sm mb-0.5">tsuki-lsp must be in PATH</div>
-            <p className="text-xs text-[var(--fg-faint)] leading-relaxed">
-              Built alongside <code className="font-mono bg-[var(--surface-3)] px-1 rounded">tsuki-core</code>.
-              Run <code className="font-mono bg-[var(--surface-3)] px-1 rounded">make lsp</code> or install via the tsuki installer.
-              Front-end diagnostics (squiggles, library detection) work without the binary.
-            </p>
+          {/* Suppressed T-codes */}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3">
+            <div className="text-xs font-medium text-[var(--fg)] mb-1">Suppressed codes</div>
+            <div className="text-[11px] text-[var(--fg-muted)] mb-3">
+              Diagnostics with these T-codes will be hidden in the editor.
+            </div>
+            <div className="flex gap-1.5 mb-3">
+              <input
+                value={suppressInput}
+                onChange={e => setSuppressInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addSuppressCode()}
+                placeholder="e.g. T0011"
+                className="flex-1 bg-[var(--surface)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono text-[var(--fg)] outline-none placeholder:text-[var(--fg-faint)]"
+              />
+              <Btn variant="outline" size="xs" onClick={addSuppressCode}>Add</Btn>
+            </div>
+            {suppressedCodes.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {suppressedCodes.map(code => (
+                  <span key={code} className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] text-[10px] font-mono text-[var(--fg-muted)] bg-[var(--surface)]">
+                    {code}
+                    <button
+                      onClick={() => updateSetting('lspSuppressedCodes', suppressedCodes.filter(c => c !== code))}
+                      className="hover:text-[var(--fg)] cursor-pointer border-0 bg-transparent leading-none ml-0.5"
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-[var(--fg-faint)] italic">No codes suppressed.</p>
+            )}
           </div>
-        </div>
-      </div>
+        </section>
 
-      <div className="flex items-start gap-2 px-3 py-3 rounded-lg bg-[color-mix(in_srgb,var(--warn)_5%,transparent)] border border-[color-mix(in_srgb,var(--warn)_20%,transparent)]">
-        <span className="text-[var(--warn)] text-xs mt-0.5 flex-shrink-0">⚠</span>
-        <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
-          Alpha feature. Full completions, hover docs, and signature help require <code className="font-mono bg-[var(--surface-3)] px-1 rounded">tsuki-lsp</code> to be installed. Front-end diagnostics and library detection run without it.
-        </p>
+        {/* ══ LANGUAGES ═════════════════════════════════════════════════════ */}
+        <section data-section="languages">
+          <div className="flex items-center gap-2 mb-4">
+            <Languages size={14} className="text-[var(--fg-muted)]" />
+            <h3 className="text-sm font-semibold tracking-tight">Language support</h3>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {([
+              {
+                key: 'lspGoEnabled' as const,
+                lang: 'Go (.go)',
+                badge: 'full',
+                badgeColor: 'text-[var(--ok)] bg-[color-mix(in_srgb,var(--ok)_10%,transparent)]',
+                coverage: 95,
+                checks: ['setup()/loop() presence', 'Missing arduino import', 'Undefined symbols', 'Arity mismatches', 'Type hints', 'Write-only vars'],
+              },
+              {
+                key: 'lspCppEnabled' as const,
+                lang: 'C++ (.cpp)',
+                badge: 'partial',
+                badgeColor: 'text-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)]',
+                coverage: 45,
+                checks: ['#include detection', 'Assign-in-condition', 'Missing setup()/loop()'],
+              },
+              {
+                key: 'lspInoEnabled' as const,
+                lang: 'Arduino (.ino)',
+                badge: 'partial',
+                badgeColor: 'text-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)]',
+                coverage: 45,
+                checks: ['Same as C++ (Arduino.h auto-injected)'],
+              },
+            ]).map(({ key, lang, badge, badgeColor, coverage, checks }) => (
+              <div key={key} className={clsx(
+                'rounded-lg border transition-colors bg-[var(--surface-1)]',
+                settings[key] && lspOn ? 'border-[var(--fg-faint)]' : 'border-[var(--border)]'
+              )}>
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-medium text-[var(--fg)]">{lang}</span>
+                      <span className={clsx('text-[9px] font-mono px-1.5 py-0.5 rounded', badgeColor)}>{badge}</span>
+                    </div>
+                    {/* Coverage bar */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="flex-1 h-1 rounded-full bg-[var(--surface-3)] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[var(--fg-faint)] transition-all"
+                          style={{ width: `${coverage}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono text-[var(--fg-faint)] w-7 text-right">{coverage}%</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {checks.map(c => (
+                        <span key={c} className="text-[9px] font-mono text-[var(--fg-faint)] bg-[var(--surface-3)] px-1.5 py-0.5 rounded">{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <Toggle
+                    on={lspOn && settings[key]}
+                    onToggle={() => updateSetting(key, !settings[key])}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ══ LIBRARIES ═════════════════════════════════════════════════════ */}
+        <section data-section="libraries">
+          <div className="flex items-center gap-2 mb-4">
+            <Package size={14} className="text-[var(--fg-muted)]" />
+            <h3 className="text-sm font-semibold tracking-tight">Library management</h3>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] mb-4">
+            <div className="flex items-center gap-4 px-4 py-3 border-b border-[var(--border-subtle)]">
+              <div className="flex-1">
+                <div className="text-sm font-medium">Show install prompt</div>
+                <div className="text-xs text-[var(--fg-muted)] mt-0.5">
+                  Offer to install missing libraries when a new import is detected.
+                </div>
+              </div>
+              <Toggle on={settings.lspShowLibPrompt} onToggle={() => updateSetting('lspShowLibPrompt', !settings.lspShowLibPrompt)} />
+            </div>
+            <div className="flex items-center gap-4 px-4 py-3">
+              <div className="flex-1">
+                <div className="text-sm font-medium">Auto-download</div>
+                <div className="text-xs text-[var(--fg-muted)] mt-0.5">
+                  Silently run <code className="font-mono bg-[var(--surface-3)] px-0.5 rounded text-[11px]">tsuki pkg add</code> without prompting.
+                </div>
+              </div>
+              <Toggle on={settings.lspAutoDownloadLibs} onToggle={() => updateSetting('lspAutoDownloadLibs', !settings.lspAutoDownloadLibs)} />
+            </div>
+          </div>
+
+          {/* Ignored libs */}
+          {(settings.lspIgnoredLibs?.length ?? 0) > 0 && (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-[var(--fg)]">
+                  Ignored ({settings.lspIgnoredLibs.length})
+                </span>
+                <Btn variant="danger" size="xs" onClick={() => updateSetting('lspIgnoredLibs', [])}>
+                  Clear all
+                </Btn>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {settings.lspIgnoredLibs.map(lib => (
+                  <span key={lib} className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface)]">
+                    {lib}
+                    <button
+                      onClick={() => updateSetting('lspIgnoredLibs', settings.lspIgnoredLibs.filter(l => l !== lib))}
+                      className="hover:text-[var(--fg)] cursor-pointer border-0 bg-transparent leading-none ml-0.5"
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Known registry grid */}
+          <div className="text-[10px] font-semibold text-[var(--fg-faint)] uppercase tracking-widest mb-2">Known registry</div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {[
+              ['Servo',            'Servo motor control'],
+              ['Wire',             'I²C / TWI protocol'],
+              ['SPI',              'Serial Peripheral Interface'],
+              ['Adafruit_NeoPixel','WS2812 LED strips'],
+              ['DHT',              'Temperature & humidity'],
+              ['IRremote',         'Infrared send/receive'],
+              ['ArduinoJson',      'JSON parsing'],
+              ['FastLED',          'High-perf LED driver'],
+              ['U8g2',             'OLED / LCD displays'],
+              ['PubSubClient',     'MQTT client'],
+              ['OneWire',          'Dallas 1-Wire'],
+              ['Adafruit_SSD1306', 'SSD1306 OLED'],
+            ].map(([name, desc]) => (
+              <div key={name} className="flex items-center gap-2 px-2.5 py-2 rounded border border-[var(--border)] bg-[var(--surface-1)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--fg-faint)] flex-shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-xs font-mono font-medium text-[var(--fg)] truncate">{name}</div>
+                  <div className="text-[10px] text-[var(--fg-faint)] truncate">{desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ══ REFERENCE ═════════════════════════════════════════════════════ */}
+        <section data-section="reference" className="pb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText size={14} className="text-[var(--fg-muted)]" />
+            <h3 className="text-sm font-semibold tracking-tight">T-code reference</h3>
+          </div>
+
+          <button
+            onClick={() => setCodesExpanded(e => !e)}
+            className="w-full flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 text-left hover:bg-[var(--hover)] transition-colors cursor-pointer mb-2"
+          >
+            <span className="text-xs font-medium text-[var(--fg)]">
+              {T_CODES.length} diagnostic codes — click to {codesExpanded ? 'collapse' : 'expand'}
+            </span>
+            <ChevronDown size={13} className={clsx('text-[var(--fg-faint)] transition-transform', codesExpanded && 'rotate-180')} />
+          </button>
+
+          {codesExpanded && (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] overflow-hidden">
+              <div className="grid text-[10px] font-semibold text-[var(--fg-faint)] uppercase tracking-widest px-4 py-2 border-b border-[var(--border)] grid-cols-[5rem_3.5rem_1fr_5rem]">
+                <span>Code</span><span>Sev</span><span>Description</span><span>Mode</span>
+              </div>
+              {T_CODES.map((tc, i) => (
+                <div
+                  key={tc.code}
+                  className={clsx(
+                    'grid items-start px-4 py-2 grid-cols-[5rem_3.5rem_1fr_5rem]',
+                    i % 2 === 0 ? 'bg-[var(--surface-1)]' : 'bg-[var(--surface-2)]',
+                    suppressedCodes.includes(tc.code) && 'opacity-40'
+                  )}
+                >
+                  <code className="font-mono text-[11px] text-[var(--fg)]">{tc.code}</code>
+                  <span className={clsx(
+                    'text-[10px] font-mono',
+                    tc.sev === 'error' ? 'text-[var(--err)]' : 'text-[var(--warn)]'
+                  )}>{tc.sev}</span>
+                  <span className="text-[11px] text-[var(--fg-muted)] leading-tight">{tc.desc}</span>
+                  <span className="text-[10px] font-mono text-[var(--fg-faint)]">{tc.mode}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3">
+            <div className="flex items-start gap-3">
+              <Zap size={13} className="mt-0.5 text-[var(--fg-faint)] flex-shrink-0" />
+              <div>
+                <div className="text-sm font-medium mb-0.5">tsuki-lsp must be in PATH</div>
+                <p className="text-xs text-[var(--fg-faint)] leading-relaxed">
+                  Built alongside <code className="font-mono bg-[var(--surface-3)] px-0.5 rounded">tsuki-core</code>.
+                  Run <code className="font-mono bg-[var(--surface-3)] px-0.5 rounded">make lsp</code> or install via the tsuki installer.
+                  Front-end diagnostics work without the binary.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </div>
     </div>
   )

@@ -62,23 +62,24 @@ function findMatches(text: string, query: string, caseSensitive: boolean): Searc
 
 // ── Completion kind icons ─────────────────────────────────────────────────────
 
+const COMPLETION_KIND_META: Record<string, { label: string; color: string }> = {
+  keyword:  { label: 'K', color: '#c084fc' },
+  function: { label: 'ƒ', color: '#60a5fa' },
+  method:   { label: 'm', color: '#34d399' },
+  variable: { label: 'v', color: '#fbbf24' },
+  type:     { label: 'T', color: '#f87171' },
+  constant: { label: 'C', color: '#fb923c' },
+  snippet:  { label: '✦', color: '#a3e635' },
+  package:  { label: 'p', color: '#94a3b8' },
+  field:    { label: 'f', color: '#fbbf24' },
+}
+
 function CompletionIcon({ kind }: { kind: CompletionItem['kind'] }) {
-  const map: Record<string, { label: string; color: string }> = {
-    keyword:  { label: 'K', color: '#c678dd' },
-    function: { label: 'f', color: '#61afef' },
-    method:   { label: 'm', color: '#56b6c2' },
-    variable: { label: 'v', color: '#e5c07b' },
-    type:     { label: 'T', color: '#e06c75' },
-    constant: { label: 'c', color: '#d19a66' },
-    snippet:  { label: '✦', color: '#98c379' },
-    package:  { label: 'p', color: '#abb2bf' },
-    field:    { label: 'x', color: '#e5c07b' },
-  }
-  const meta = map[kind] ?? { label: '·', color: '#abb2bf' }
+  const meta = COMPLETION_KIND_META[kind] ?? { label: '·', color: '#94a3b8' }
   return (
     <span
-      className="w-5 h-5 rounded flex items-center justify-center font-mono font-bold flex-shrink-0 text-[10px] select-none"
-      style={{ background: `${meta.color}22`, color: meta.color }}
+      className="w-[18px] h-[18px] rounded-sm flex items-center justify-center font-mono font-bold flex-shrink-0 text-[9px] select-none"
+      style={{ background: `${meta.color}1a`, color: meta.color, border: `1px solid ${meta.color}33` }}
     >
       {meta.label}
     </span>
@@ -99,48 +100,55 @@ function CompletionDropdown({
 }) {
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll active item into view
   useEffect(() => {
     const el = listRef.current?.children[activeIdx] as HTMLElement
     el?.scrollIntoView({ block: 'nearest' })
   }, [activeIdx])
 
   if (!items.length) return null
+  const clampH = Math.min(maxH, 220)
 
   return (
     <div
-      className="fixed z-50 rounded-lg border overflow-hidden shadow-2xl"
+      className="fixed z-50 rounded-lg border overflow-hidden"
       style={{
-        left: x, top: y,
-        width: 280,
-        maxHeight: Math.min(maxH, 240),
-        background: 'var(--surface-3)',
-        borderColor: '#ffffff18',
-        boxShadow: '0 8px 40px rgba(0,0,0,.7)',
+        left: x, top: y, width: 296, maxHeight: clampH,
+        background: '#111114',
+        borderColor: 'rgba(255,255,255,0.1)',
+        boxShadow: '0 12px 48px rgba(0,0,0,.8), 0 2px 8px rgba(0,0,0,.4)',
       }}
     >
-      <div ref={listRef} className="overflow-y-auto" style={{ maxHeight: Math.min(maxH, 240) - (items.length > 0 ? 0 : 0) }}>
-        {items.map((item, i) => (
-          <div
-            key={i}
-            onClick={() => onSelect(item)}
-            onMouseEnter={() => onHover(item)}
-            onMouseLeave={() => onHover(null)}
-            className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer transition-colors ${
-              i === activeIdx ? 'bg-[var(--active)]' : 'hover:bg-[var(--hover)]'
-            }`}
-          >
-            <CompletionIcon kind={item.kind} />
-            <span className="flex-1 min-w-0">
-              <span className="text-xs text-[var(--fg)] font-mono">{item.label}</span>
-            </span>
-            {item.detail && (
-              <span className="text-[10px] text-[var(--fg-faint)] font-mono truncate max-w-[90px] flex-shrink-0">
-                {item.detail.replace(/^func\s+\w+/, '').replace(/^func\s+/, '').replace(/\(.*/, '(…)')}
-              </span>
-            )}
-          </div>
-        ))}
+      <div ref={listRef} className="overflow-y-auto" style={{ maxHeight: clampH }}>
+        {items.map((item, i) => {
+          const active = i === activeIdx
+          const meta = COMPLETION_KIND_META[item.kind] ?? { label: '·', color: '#94a3b8' }
+          return (
+            <div
+              key={i}
+              onClick={() => onSelect(item)}
+              onMouseEnter={() => onHover(item)}
+              onMouseLeave={() => onHover(null)}
+              style={{
+                background: active ? 'rgba(255,255,255,0.08)' : undefined,
+                borderLeft: active ? `2px solid ${meta.color}` : '2px solid transparent',
+              }}
+              className="flex items-center gap-2 px-2 py-[5px] cursor-pointer hover:bg-[rgba(255,255,255,0.04)] transition-none"
+            >
+              <CompletionIcon kind={item.kind} />
+              <span className="flex-1 min-w-0 text-[12px] text-[#e2e8f0] font-mono leading-none">{item.label}</span>
+              {item.detail && (
+                <span className="text-[10px] text-[#475569] font-mono truncate max-w-[80px] flex-shrink-0">
+                  {item.detail.replace(/^func\s+\w+/, '').replace(/\(.*/, '(…)')}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {/* Footer */}
+      <div className="px-2 py-1 border-t border-[rgba(255,255,255,0.06)] flex items-center gap-2">
+        <span className="text-[9px] text-[#334155] font-mono">↑↓ navigate</span>
+        <span className="text-[9px] text-[#334155] font-mono ml-auto">↵ select · Esc dismiss</span>
       </div>
     </div>
   )
@@ -152,20 +160,19 @@ function CompletionDetail({ item, x, y }: { item: CompletionItem | null; x: numb
   if (!item || (!item.detail && !item.documentation)) return null
   return (
     <div
-      className="fixed z-50 rounded-lg border p-3 shadow-2xl pointer-events-none animate-fade-in"
+      className="fixed z-50 rounded-lg border p-3 pointer-events-none animate-fade-in"
       style={{
-        left: x + 288, top: y,
-        width: 240,
-        background: 'var(--surface-3)',
-        borderColor: '#ffffff18',
-        boxShadow: '0 8px 40px rgba(0,0,0,.7)',
+        left: x + 304, top: y, width: 232,
+        background: '#111114',
+        borderColor: 'rgba(255,255,255,0.1)',
+        boxShadow: '0 12px 48px rgba(0,0,0,.8)',
       }}
     >
       {item.detail && (
-        <p className="text-[10px] font-mono text-[#61afef] mb-1.5 break-all">{item.detail}</p>
+        <div className="font-mono text-[11px] text-[#60a5fa] mb-2 break-all leading-relaxed">{item.detail}</div>
       )}
       {item.documentation && (
-        <p className="text-xs text-[var(--fg-muted)] leading-relaxed">{item.documentation}</p>
+        <p className="text-[11px] text-[#94a3b8] leading-relaxed">{item.documentation}</p>
       )}
     </div>
   )
@@ -174,32 +181,34 @@ function CompletionDetail({ item, x, y }: { item: CompletionItem | null; x: numb
 // ── Hover doc tooltip ─────────────────────────────────────────────────────────
 
 function HoverDocTooltip({ doc, x, y }: { doc: HoverDoc; x: number; y: number }) {
-  const safeX = typeof window !== 'undefined' ? Math.min(x + 14, window.innerWidth - 300) : x
-  const safeY = Math.max(y - 12, 8)
+  const safeX = typeof window !== 'undefined' ? Math.min(x + 14, window.innerWidth - 320) : x
+  const safeY = Math.max(y - 8, 8)
   return (
     <div className="fixed z-50 pointer-events-none animate-fade-up" style={{ left: safeX, top: safeY, maxWidth: 340 }}>
-      <div className="rounded-lg border px-3 py-2.5 shadow-2xl flex flex-col gap-2"
-        style={{ background: 'var(--surface-3)', borderColor: '#ffffff18', boxShadow: '0 8px 32px rgba(0,0,0,.65)' }}>
-        {/* Title + tags */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-mono font-bold text-[var(--fg)]">{doc.title}</span>
+      <div className="rounded-lg border flex flex-col overflow-hidden"
+        style={{ background: '#0d0d10', borderColor: 'rgba(255,255,255,0.1)', boxShadow: '0 12px 48px rgba(0,0,0,.8)' }}>
+        {/* Header */}
+        <div className="flex items-center gap-2 flex-wrap px-3 pt-2.5 pb-1.5 border-b border-[rgba(255,255,255,0.06)]">
+          <span className="text-[12px] font-mono font-semibold text-[#e2e8f0]">{doc.title}</span>
           {doc.tags?.map(t => (
-            <span key={t} className="text-[9px] font-mono px-1 py-0.5 rounded"
-              style={{ background: '#61afef22', color: '#61afef' }}>{t}</span>
+            <span key={t} className="text-[9px] font-mono px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.2)' }}>{t}</span>
           ))}
         </div>
-        {/* Signature */}
+        {/* Signature block */}
         {doc.signature && (
-          <pre className="text-[10px] font-mono text-[#abb2bf] bg-[var(--surface-4)] px-2 py-1.5 rounded overflow-x-auto whitespace-pre-wrap break-all">{doc.signature}</pre>
+          <pre className="text-[11px] font-mono text-[#94a3b8] bg-[rgba(255,255,255,0.03)] px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all m-0 border-b border-[rgba(255,255,255,0.06)]">{doc.signature}</pre>
         )}
-        {/* Doc */}
-        <p className="text-xs text-[var(--fg-muted)] leading-relaxed">{doc.doc}</p>
-        {/* Return type */}
-        {doc.returns && (
-          <p className="text-[10px] font-mono text-[var(--fg-faint)]">
-            <span className="text-[#e06c75]">returns</span> {doc.returns}
-          </p>
-        )}
+        {/* Doc body */}
+        <div className="px-3 py-2 flex flex-col gap-1.5">
+          <p className="text-[11px] text-[#64748b] leading-relaxed">{doc.doc}</p>
+          {doc.returns && (
+            <p className="text-[10px] font-mono">
+              <span style={{ color: '#f87171' }}>returns</span>
+              <span style={{ color: '#94a3b8' }}> {doc.returns}</span>
+            </p>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -343,49 +352,130 @@ function InlayHintsLayer({ hints, fontSize, scrollTop, scrollLeft, code }: {
 
 // ── Diagnostic widgets ────────────────────────────────────────────────────────
 
-function Squiggles({ diags, fontSize, scrollTop, scrollLeft }: {
-  diags: Diagnostic[]; fontSize: number; scrollTop: number; scrollLeft: number
+// Precise wavy underline per diagnostic — uses d.col / d.endCol for pixel-exact positioning
+function DiagUnderlines({ diags, fontSize, scrollTop, scrollLeft, code }: {
+  diags: Diagnostic[]; fontSize: number; scrollTop: number; scrollLeft: number; code: string
 }) {
-  const lineH = Math.round(fontSize * 1.62)
-  const map = new Map<number, 'error' | 'warning' | 'info'>()
-  const p = { error: 3, warning: 2, info: 1 } as const
-  for (const d of diags) { const ex = map.get(d.line); if (!ex || p[d.severity] > p[ex]) map.set(d.line, d.severity) }
-  if (!map.size) return null
-  const c = { error: '#ef4444', warning: '#f59e0b', info: '#3b82f6' }
+  const lineH  = Math.round(fontSize * 1.62)
+  const charW  = fontSize * 0.601
+  const lines  = code.split('\n')
+  if (!diags.length) return null
+
+  const c = { error: '#f87171', warning: '#fbbf24', info: '#60a5fa' } as const
+  const wave = (col: string) =>
+    `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='3'%3E%3Cpath d='M0 2.5 Q2 0.5 4 2.5 Q6 4.5 8 2.5' stroke='${encodeURIComponent(col)}' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`
+
+  // Dedup by line+sev — keep highest priority per (line, col) pair
+  const rendered: React.ReactNode[] = []
+  const seen = new Set<string>()
+
+  for (const d of diags) {
+    const lineText = lines[d.line - 1] ?? ''
+    const startCol = Math.max(0, (d.col ?? 1) - 1)          // 0-based
+    // Estimate end col: use endCol if provided, else find end of word at startCol
+    let endCol: number
+    if (d.endCol != null && d.endCol > startCol) {
+      endCol = d.endCol
+    } else {
+      // Find the word boundary starting at startCol
+      const rest = lineText.slice(startCol)
+      const wordLen = rest.match(/^[\w.]+/)?.[0]?.length ?? Math.min(8, lineText.length - startCol)
+      endCol = startCol + Math.max(wordLen, 2)
+    }
+
+    const key = `${d.line}:${startCol}:${d.severity}`
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    const left  = startCol * charW + 16    // 16px textarea padding
+    const width = Math.max((endCol - startCol) * charW, 8)
+    const top   = (d.line - 1) * lineH + lineH - 1 + 12
+
+    rendered.push(
+      <div key={key} className="absolute pointer-events-none"
+        style={{
+          left, top, width, height: 3,
+          backgroundImage: wave(c[d.severity] ?? c.info),
+          backgroundRepeat: 'repeat-x',
+          backgroundSize: '8px 3px',
+        }} />
+    )
+  }
+
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden"
       style={{ transform: `translate(-${scrollLeft}px, -${scrollTop}px)` }}>
+      {rendered}
+    </div>
+  )
+}
+
+// Left gutter bar — 3px vertical strip at the left edge of the editor area, one per affected line
+function DiagGutterBars({ diags, fontSize, scrollTop }: {
+  diags: Diagnostic[]; fontSize: number; scrollTop: number
+}) {
+  const lineH = Math.round(fontSize * 1.62)
+  if (!diags.length) return null
+
+  // Keep highest-severity per line
+  const map = new Map<number, 'error' | 'warning' | 'info'>()
+  const p = { error: 3, warning: 2, info: 1 } as const
+  for (const d of diags) {
+    if (d.severity === 'info') continue
+    const ex = map.get(d.line)
+    if (!ex || p[d.severity] > p[ex as keyof typeof p]) map.set(d.line, d.severity)
+  }
+  if (!map.size) return null
+
+  const c = { error: '#f87171', warning: '#fbbf24', info: '#60a5fa' } as const
+
+  return (
+    <div className="absolute top-0 left-0 pointer-events-none z-20" style={{ width: 3 }}>
       {Array.from(map.entries()).map(([line, sev]) => (
-        <div key={line} className="absolute left-4 right-4"
-          style={{
-            top: (line - 1) * lineH + lineH - 2 + 12, height: 2,
-            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='2'%3E%3Cpath d='M0 1 Q1.5 0 3 1 Q4.5 2 6 1' stroke='${encodeURIComponent(c[sev])}' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")`,
-            backgroundRepeat: 'repeat-x', backgroundSize: '6px 2px',
-          }} />
+        <div key={line} style={{
+          position: 'absolute',
+          top: (line - 1) * lineH + 12 - scrollTop,
+          height: lineH,
+          width: 3,
+          background: c[sev],
+          opacity: 0.82,
+          borderRadius: '0 1px 1px 0',
+        }} />
       ))}
     </div>
   )
 }
 
+// Inline ghost text — right-aligned, faint code-style message after the line
 function InlineGhostText({ diags, fontSize, scrollTop }: {
   diags: Diagnostic[]; fontSize: number; scrollTop: number
 }) {
   const lineH = Math.round(fontSize * 1.62)
   const map = new Map<number, Diagnostic>()
   const p = { error: 2, warning: 1, info: 0 } as const
-  for (const d of diags) { if (d.severity === 'info') continue; const ex = map.get(d.line); if (!ex || p[d.severity] > p[ex.severity]) map.set(d.line, d) }
+  for (const d of diags) {
+    if (d.severity === 'info') continue
+    const ex = map.get(d.line)
+    if (!ex || p[d.severity] > p[ex.severity]) map.set(d.line, d)
+  }
   if (!map.size) return null
-  const col = { error: '#ef444480', warning: '#f59e0b80', info: '#3b82f680' }
+  const styles = {
+    error:   { color: 'rgba(248,113,113,0.55)',  icon: '✕' },
+    warning: { color: 'rgba(251,191,36,0.55)',   icon: '⚠' },
+    info:    { color: 'rgba(96,165,250,0.55)',   icon: 'ℹ' },
+  } as const
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden"
       style={{ transform: `translateY(-${scrollTop}px)` }}>
       {Array.from(map.entries()).map(([line, d]) => {
-        const msg = d.message.length > 55 ? d.message.slice(0, 53) + '…' : d.message
+        const st = styles[d.severity]
+        const msg = d.message.length > 52 ? d.message.slice(0, 50) + '…' : d.message
         return (
-          <div key={line} className="absolute right-8 flex items-center gap-1 font-mono whitespace-nowrap"
-            style={{ top: (line - 1) * lineH + 12, height: lineH, fontSize: Math.max(fontSize - 2, 10), color: col[d.severity], maxWidth: '40%' }}>
-            <span className="font-bold text-[9px]">{d.severity === 'error' ? '✗' : '⚠'}</span>
-            <span className="truncate">{msg}</span>
+          <div key={line}
+            className="absolute right-10 flex items-center gap-1.5 font-mono whitespace-nowrap select-none"
+            style={{ top: (line - 1) * lineH + 12, height: lineH, fontSize: Math.max(fontSize - 2, 10), color: st.color, maxWidth: '38%' }}>
+            <span style={{ fontSize: 9, opacity: 0.9 }}>{st.icon}</span>
+            <span className="truncate italic" style={{ letterSpacing: '0.01em' }}>{msg}</span>
           </div>
         )
       })}
@@ -396,13 +486,21 @@ function InlineGhostText({ diags, fontSize, scrollTop }: {
 function DiagBadge({ diags }: { diags: Diagnostic[] }) {
   const errs  = diags.filter(d => d.severity === 'error').length
   const warns = diags.filter(d => d.severity === 'warning').length
-  const infos = diags.filter(d => d.severity === 'info').length
-  if (!errs && !warns && !infos) return null
+  if (!errs && !warns) return null
   return (
-    <div className="absolute bottom-3 right-4 z-10 flex items-center gap-1 select-none pointer-events-none">
-      {errs  > 0 && <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md" style={{ background: '#ef444420', color: '#ef4444', border: '1px solid #ef444330' }}>✗ {errs}</span>}
-      {warns > 0 && <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md" style={{ background: '#f59e0b20', color: '#f59e0b', border: '1px solid #f59e0b30' }}>⚠ {warns}</span>}
-      {infos > 0 && <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f620', color: '#3b82f6', border: '1px solid #3b82f630' }}>ℹ {infos}</span>}
+    <div className="absolute bottom-3 right-4 z-10 flex items-center gap-1.5 select-none pointer-events-none">
+      {errs  > 0 && (
+        <span className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded"
+          style={{ background: 'rgba(248,113,113,0.12)', color: '#f87171', border: '1px solid rgba(248,113,113,0.25)' }}>
+          <span style={{ fontSize: 8 }}>✕</span> {errs}
+        </span>
+      )}
+      {warns > 0 && (
+        <span className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded"
+          style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.22)' }}>
+          <span style={{ fontSize: 8 }}>⚠</span> {warns}
+        </span>
+      )}
     </div>
   )
 }
@@ -452,27 +550,36 @@ function DiagTip({ diags, x, y, onInstall }: {
   const safeY = Math.max(y - 80, 8)
   return (
     <div className="fixed z-50 pointer-events-none max-w-sm animate-fade-up" style={{ left: safeX, top: safeY }}>
-      <div className="rounded-lg border px-3 py-2.5 text-xs shadow-2xl flex flex-col gap-2"
-        style={{ background: 'var(--surface-3)', borderColor: '#ffffff18', boxShadow: '0 8px 32px rgba(0,0,0,.65)' }}>
+      <div className="rounded-lg border overflow-hidden"
+        style={{ background: '#0d0d10', borderColor: 'rgba(255,255,255,0.1)', boxShadow: '0 12px 48px rgba(0,0,0,.8)' }}>
         {diags.slice(0, 3).map((d, i) => {
-          const col = d.severity === 'error' ? '#ef4444' : d.severity === 'warning' ? '#f59e0b' : '#3b82f6'
-          const bg  = d.severity === 'error' ? '#ef444415' : d.severity === 'warning' ? '#f59e0b15' : '#3b82f615'
+          const isErr  = d.severity === 'error'
+          const isWarn = d.severity === 'warning'
+          const col    = isErr ? '#f87171' : isWarn ? '#fbbf24' : '#60a5fa'
+          const borderL = isErr ? '2px solid #f87171' : isWarn ? '2px solid #fbbf24' : '2px solid #60a5fa'
+          // Extract T-code if present
+          const tcode = d.message.match(/\[?(T\d{4})\]?/)?.[1]
+          const msg = tcode ? d.message.replace(/\[?T\d{4}\]?\s*[:—\-]?\s*/, '') : d.message
           return (
-            <div key={i} className="flex items-start gap-2 rounded p-1.5" style={{ background: bg }}>
-              <span style={{ color: col }} className="flex-shrink-0 font-bold mt-0.5 text-[11px]">
-                {d.severity === 'error' ? '✗' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+            <div key={i} className="flex items-start gap-2.5 px-3 py-2.5" style={{ borderLeft: borderL, borderBottom: i < diags.slice(0,3).length - 1 ? '1px solid rgba(255,255,255,0.05)' : undefined }}>
+              <span style={{ color: col, fontSize: 11, marginTop: 1 }} className="flex-shrink-0 font-bold">
+                {isErr ? '✕' : isWarn ? '⚠' : 'ℹ'}
               </span>
               <div className="flex-1 min-w-0">
-                <p className="text-[var(--fg)] leading-relaxed break-words">{d.message}</p>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <span className="text-[10px] font-mono text-[var(--fg-faint)] bg-[var(--surface-4)] px-1.5 py-0.5 rounded">
-                    {d.source === 'lsp' ? 'lsp' : 'lint'} · L{d.line}:{d.col}
-                  </span>
-                  {d.quickFix && <span className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">💡 {d.quickFix.label}</span>}
+                <p className="text-[12px] text-[#e2e8f0] leading-relaxed break-words">{msg}</p>
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  {tcode && (
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: `${col}18`, color: col, border: `1px solid ${col}30` }}>{tcode}</span>
+                  )}
+                  <span className="text-[9px] font-mono text-[#334155]">L{d.line}:{d.col}</span>
+                  {d.quickFix && (
+                    <span className="text-[9px] font-mono text-[#60a5fa]" style={{ background: 'rgba(96,165,250,0.1)', padding: '1px 5px', borderRadius: 3 }}>💡 {d.quickFix.label}</span>
+                  )}
                   {d.missingLib && onInstall && (
                     <button onClick={() => onInstall(d.missingLib!)}
-                      className="text-[10px] text-emerald-400 hover:text-emerald-300 bg-emerald-400/10 hover:bg-emerald-400/20 px-1.5 py-0.5 rounded cursor-pointer border-0 pointer-events-auto transition-colors">
-                      ↓ Install
+                      className="text-[9px] font-mono cursor-pointer border-0 pointer-events-auto transition-colors"
+                      style={{ color: '#34d399', background: 'rgba(52,211,153,0.1)', padding: '1px 6px', borderRadius: 3 }}>
+                      ↓ Install {d.missingLib.displayName}
                     </button>
                   )}
                 </div>
@@ -499,25 +606,66 @@ function formatGo(code: string, tabSize: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  LINE NUMBERS
+//  LINE NUMBERS + BREAKPOINT GUTTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LineNumbers({ count, fontSize, errLines, warnLines, curLine }: {
-  count: number; fontSize: number; errLines: Set<number>; warnLines: Set<number>; curLine: number
+function LineNumbers({ count, fontSize, errLines, warnLines, curLine, breakpointLines, onToggleBreakpoint }: {
+  count: number; fontSize: number
+  errLines: Set<number>; warnLines: Set<number>; curLine: number
+  breakpointLines: Set<number>; onToggleBreakpoint: (line: number) => void
 }) {
   const lineH = Math.round(fontSize * 1.62)
   return (
-    <div className="select-none flex-shrink-0" style={{ width: 52, paddingTop: 12, paddingBottom: 200 }}>
-      {Array.from({ length: count }, (_, i) => {
-        const n = i + 1; const isE = errLines.has(n); const isW = !isE && warnLines.has(n); const isC = n === curLine
-        return (
-          <div key={i} className="font-mono pr-2 flex items-center justify-end gap-1"
-            style={{ fontSize, lineHeight: `${lineH}px`, background: isC ? 'rgba(255,255,255,0.025)' : undefined }}>
-            {(isE || isW) && <span className="text-[8px] leading-none" style={{ color: isE ? '#ef4444' : '#f59e0b' }}>{isE ? '●' : '◐'}</span>}
-            <span style={{ color: isC ? 'var(--fg)' : isE ? '#ef4444' : isW ? '#f59e0b' : 'var(--fg-faint)', fontWeight: isC ? '600' : undefined }}>{n}</span>
-          </div>
-        )
-      })}
+    <div className="select-none flex-shrink-0 flex" style={{ width: 66, paddingTop: 12, paddingBottom: 200 }}>
+      {/* Breakpoint gutter — 14px */}
+      <div style={{ width: 14, flexShrink: 0 }}>
+        {Array.from({ length: count }, (_, i) => {
+          const n = i + 1
+          const hasBp = breakpointLines.has(n)
+          return (
+            <div
+              key={i}
+              title={hasBp ? `Remove breakpoint at line ${n}` : `Add breakpoint at line ${n}`}
+              onClick={() => onToggleBreakpoint(n)}
+              className="flex items-center justify-center cursor-pointer group"
+              style={{ height: lineH, width: 14 }}
+            >
+              {hasBp ? (
+                <span style={{ fontSize: 8, color: '#f87171', lineHeight: 1 }}>●</span>
+              ) : (
+                <span style={{ fontSize: 7, color: 'transparent', lineHeight: 1 }}
+                  className="group-hover:!text-[rgba(248,113,113,0.4)] transition-colors">●</span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {/* Line number column — 52px */}
+      <div style={{ flex: 1 }}>
+        {Array.from({ length: count }, (_, i) => {
+          const n = i + 1
+          const isE = errLines.has(n)
+          const isW = !isE && warnLines.has(n)
+          const isC = n === curLine
+          const isBp = breakpointLines.has(n)
+          return (
+            <div key={i} className="font-mono pr-2 flex items-center justify-end gap-1"
+              style={{
+                fontSize, lineHeight: `${lineH}px`,
+                background: isBp ? 'rgba(248,113,113,0.08)' : isC ? 'rgba(255,255,255,0.025)' : undefined,
+              }}>
+              {(isE || isW) && (
+                <span style={{ fontSize: 7, lineHeight: 1, color: isE ? '#f87171' : '#fbbf24' }}>●</span>
+              )}
+              <span style={{
+                color: isC ? 'var(--fg)' : isBp ? '#f87171' : isE ? '#f87171' : isW ? '#fbbf24' : 'var(--fg-faint)',
+                fontWeight: isC ? '600' : undefined,
+                opacity: (!isC && !isBp && !isE && !isW) ? 0.6 : undefined,
+              }}>{n}</span>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -595,7 +743,7 @@ function IndentGuides({ code, fontSize, tabSize, scrollTop, scrollLeft, curLine 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function CodeEditor() {
-  const { openTabs, activeTabIdx, updateTabContent, saveFile, setProblems, settings, dispatchCommand, togglePackage, packages } = useStore()
+  const { openTabs, activeTabIdx, updateTabContent, saveFile, setProblems, settings, dispatchCommand, togglePackage, packages, updateSetting } = useStore()
 
   const tab       = activeTabIdx >= 0 ? openTabs[activeTabIdx] : null
   const taRef     = useRef<HTMLTextAreaElement>(null)
@@ -616,6 +764,18 @@ export default function CodeEditor() {
   const lineH     = Math.round(fontSize * 1.62)
   const tabSize   = settings.tabSize
   const charWidth = fontSize * 0.601
+
+  // ── Breakpoints ────────────────────────────────────────────────────────────
+  const bpFileId = tab?.fileId ?? ''
+  const allBreakpoints = settings.breakpoints ?? {}
+  const bpLines = new Set<number>(allBreakpoints[bpFileId] ?? [])
+  function toggleBreakpoint(line: number) {
+    const current = allBreakpoints[bpFileId] ?? []
+    const next = current.includes(line)
+      ? current.filter(l => l !== line)
+      : [...current, line].sort((a, b) => a - b)
+    updateSetting('breakpoints', { ...allBreakpoints, [bpFileId]: next })
+  }
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [diags, setDiags]               = useState<Diagnostic[]>([])
@@ -714,6 +874,8 @@ export default function CodeEditor() {
       lspCppEnabled: settings.lspCppEnabled ?? true,
       lspInoEnabled: settings.lspInoEnabled ?? true,
       installedPackages,
+      checkerLevel: (settings as any).checkerLevel ?? 'dev',
+      lspMode: (settings as any).lspMode ?? 'hybrid',
     })
     setDiags(result); setProblems(result)
     if (!settings.lspShowLibPrompt) return
@@ -1133,14 +1295,21 @@ export default function CodeEditor() {
       <div className="flex flex-1 overflow-hidden bg-[var(--surface)]" style={editorStyle}>
 
         {/* Line numbers */}
-        <div className="overflow-hidden flex-shrink-0 relative border-r border-[var(--border-subtle)]" style={{ width: 52 }}>
+        <div className="overflow-hidden flex-shrink-0 relative border-r border-[var(--border-subtle)]" style={{ width: 66 }}>
           <div ref={lnRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, willChange: 'transform' }}>
-            <LineNumbers count={lineCount} fontSize={fontSize} errLines={errLines} warnLines={warnLines} curLine={curLine} />
+            <LineNumbers count={lineCount} fontSize={fontSize} errLines={errLines} warnLines={warnLines} curLine={curLine}
+              breakpointLines={bpLines} onToggleBreakpoint={toggleBreakpoint} />
           </div>
         </div>
 
         {/* Editor area */}
         <div className="flex-1 relative overflow-hidden" onMouseMove={onMouseMove} onMouseLeave={onMouseLeave}>
+
+          {/* Breakpoint line highlights */}
+          {Array.from(bpLines).map(bpLine => (
+            <div key={bpLine} className="absolute left-0 right-0 pointer-events-none z-0"
+              style={{ top: (bpLine - 1) * lineH + 12 - scrollTop, height: lineH, background: 'rgba(239,68,68,0.08)', borderLeft: '2px solid rgba(239,68,68,0.4)' }} />
+          ))}
 
           {/* Current line highlight */}
           <div className="absolute left-0 right-0 pointer-events-none z-0"
@@ -1169,7 +1338,8 @@ export default function CodeEditor() {
             dangerouslySetInnerHTML={{ __html: highlighted + '\n' }} />
 
           {/* LSP overlays */}
-          {lspEffective && <Squiggles diags={diags} fontSize={fontSize} scrollTop={scrollTop} scrollLeft={scrollLeft} />}
+          {lspEffective && <DiagUnderlines diags={diags} fontSize={fontSize} scrollTop={scrollTop} scrollLeft={scrollLeft} code={content} />}
+          {lspEffective && <DiagGutterBars diags={diags} fontSize={fontSize} scrollTop={scrollTop} />}
           {lspEffective && ghostEnabled && <InlineGhostText diags={diags} fontSize={fontSize} scrollTop={scrollTop} />}
 
           {/* Inlay hints */}

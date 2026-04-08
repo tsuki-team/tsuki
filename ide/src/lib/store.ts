@@ -221,6 +221,12 @@ export interface SettingsState {
   lspAutoDownloadLibs: boolean  // silently download missing libs without prompting
   lspShowLibPrompt: boolean     // show popup when a missing lib import is detected
   lspIgnoredLibs: string[]      // libs the user has clicked "don't ask again" for
+  lspMode: 'none' | 'v1' | 'v2' | 'hybrid' | 'checker'  // diagnostic engine mode
+  checkerEnabled: boolean       // enable tsuki-core Rust checker (checker mode)
+  checkerLevel: 'strict' | 'dev' | 'none'  // checker strictness level
+  lspSuppressedCodes: string[]  // T-codes suppressed from diagnostics (e.g. "T0011")
+  installedRegistryBoards: string[]  // ids of installed board support packages
+  breakpoints: Record<string, number[]>  // fileId → sorted list of breakpoint line numbers
   // ── Build files ───────────────────────────────────────────────────────────
   /** When false (default), files inside build/ open in read-only view mode with
    *  LSP disabled. Set to true in Settings → Editor to allow editing them. */
@@ -514,6 +520,12 @@ const DEFAULT_SETTINGS: SettingsState = {
   lspAutoDownloadLibs: false,
   lspShowLibPrompt: true,
   lspIgnoredLibs: [],
+  lspMode: 'hybrid',
+  checkerEnabled: false,
+  checkerLevel: 'strict',
+  lspSuppressedCodes: [],
+  installedRegistryBoards: [],
+  breakpoints: {},
   allowEditBuildFiles: false,
   monitorPort: '',
   monitorBaud: '9600',

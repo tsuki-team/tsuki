@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -137,14 +138,30 @@ const (
 type InstallOptions struct {
 	Source  string
 	Version string
+	// rawTOML is an already-fetched TOML string. When non-empty, the HTTP
+	// fetch step is skipped and this content is used directly (used by
+	// InstallFromTsukiPkg to avoid double-downloading).
+	rawTOML string
 }
 
 // Install fetches a tsukilib.toml, optionally verifies its Ed25519
 // signature, and places it in LibsDir.
+//
+// When opts.rawTOML is non-empty the HTTP/file fetch is skipped entirely and
+// the pre-loaded TOML content is used directly.  This avoids a redundant
+// network round-trip when the caller (e.g. InstallFromTsukiPkg) has already
+// downloaded the file.
 func Install(opts InstallOptions) (*InstalledPackage, error) {
-	tomlData, err := fetchTOML(opts.Source)
-	if err != nil {
-		return nil, err
+	var tomlData string
+	if opts.rawTOML != "" {
+		// Bypass fetch: caller already has the TOML content.
+		tomlData = opts.rawTOML
+	} else {
+		var err error
+		tomlData, err = fetchTOML(opts.Source)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	name, version, description, header, arduinoLib, err := parseTOMLMeta(tomlData)
@@ -996,4 +1013,91 @@ func PrintBoardList(boards []InstalledBoard) {
 		ui.ColorMuted.Printf("  %s\n", b.FQBN)
 	}
 	fmt.Println()
+}
+
+// ── tsuki-pkg direct fetch (Epic 11) ─────────────────────────────────────────
+
+// PkgCacheDir returns the directory where remotely-fetched tsukilib packages
+// are cached: ~/.cache/tsuki/pkg  (Linux/macOS) or %LOCALAPPDATA%\tsuki\pkg-cache.
+func PkgCacheDir() string {
+	cfg, err := config.Load()
+	if err == nil && cfg != nil {
+		// Allow override via env (mirrors tsuki-core pkg_loader behaviour)
+		if env := os.Getenv("tsuki_PKG_CACHE"); env != "" {
+			return env
+		}
+	}
+	home, _ := os.UserHomeDir()
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("LOCALAPPDATA")
+		if base == "" {
+			base = filepath.Join(home, "AppData", "Local")
+		}
+		return filepath.Join(base, "tsuki", "pkg-cache")
+	}
+	cacheBase := os.Getenv("XDG_CACHE_HOME")
+	if cacheBase == "" {
+		cacheBase = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(cacheBase, "tsuki", "pkg")
+}
+
+// TsukiPkgLibURL builds the raw GitHub URL for a lib's tsukilib.toml using
+// the tsuki-pkg registry base URL from config.
+//
+//	{PkgRegistryURL}/libs/{name}/{version}/godotinolib.toml
+func TsukiPkgLibURL(name, version string) (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.Default()
+	}
+	base := cfg.ResolvedPkgRegistryURL()
+	return fmt.Sprintf("%s/libs/%s/%s/godotinolib.toml", base, name, version), nil
+}
+
+// InstallFromTsukiPkg downloads a tsukilib.toml directly from the tsuki-pkg
+// repository using the PkgRegistryURL from config, caches it, and installs it
+// into the local libs store.
+//
+// This is the preferred install path for binary distributions of the CLI where
+// the /pkg git submodule is not present.
+func InstallFromTsukiPkg(name, version string) (*InstalledPackage, error) {
+	tomlURL, err := TsukiPkgLibURL(name, version)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := httpGet(tomlURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %s@%s from tsuki-pkg: %w", name, version, err)
+	}
+	tomlStr := string(data)
+
+	// Write into the pkg cache first so tsuki-core can load it.
+	cacheDir := PkgCacheDir()
+	pkgCachePath := filepath.Join(cacheDir, name, version)
+	if err := os.MkdirAll(pkgCachePath, 0755); err != nil {
+		return nil, fmt.Errorf("creating cache dir %s: %w", pkgCachePath, err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgCachePath, "tsukilib.toml"), data, 0644); err != nil {
+		return nil, fmt.Errorf("writing cache: %w", err)
+	}
+
+	// Also install into the user's libs store for use by tsuki-core builds.
+	return Install(InstallOptions{Source: tomlURL, Version: version, rawTOML: tomlStr})
+}
+
+// InstallFromRegistryOrTsukiPkg installs a package by registry lookup first,
+// falling back to a direct tsuki-pkg fetch when the package is not listed in
+// any configured registry index.
+func InstallFromRegistryOrTsukiPkg(name, version string) (*InstalledPackage, error) {
+	// Try registry lookup (fetches packages.json from all configured registries).
+	pkg, err := InstallFromRegistry(name, version)
+	if err == nil {
+		return pkg, nil
+	}
+
+	// Registry failed — attempt direct fetch from tsuki-pkg.
+	ui.Info(fmt.Sprintf("not found in registry, trying tsuki-pkg directly for %q…", name))
+	return InstallFromTsukiPkg(name, version)
 }

@@ -1,0 +1,33 @@
+# {{.Name}}
+
+{{.Description}}
+
+---
+
+## Installation
+
+```
+tsuki boards install {{.ID}}
+```
+
+---
+
+## Specs
+
+| Property | Value |
+|---|---|
+| FQBN | `{{.FQBN}}` |
+| Architecture | {{.Toolchain.Type}} |
+| MCU | `{{.Toolchain.MCU}}` |
+| Flash | {{.FlashKB}} KB |
+| RAM | {{.RAMKB}} KB |
+| Programmer | {{.Toolchain.Programmer}} |
+| Baud | {{.Toolchain.Baud}} |
+{{- if .Defines}}
+
+## Defines
+
+```
+{{join .Defines "\n"}}
+```
+{{- end}}

@@ -2,7 +2,7 @@
 import { useStore, BottomTab } from '@/lib/store'
 import { useEffect, useRef, useState, useCallback, KeyboardEvent as RKE } from 'react'
 import { IconBtn } from '@/components/shared/primitives'
-import { Trash2, GripHorizontal, AlertTriangle, Info, AlertCircle, Filter, Copy, ChevronDown, Radio, Circle, PlugZap, Unplug, Settings2 } from 'lucide-react'
+import { Trash2, GripHorizontal, AlertTriangle, Info, AlertCircle, ChevronDown, Radio, Circle, PlugZap, Unplug, Settings2 } from 'lucide-react'
 import SerialMonitor from '@/components/other/SerialMonitor'
 import { clsx } from 'clsx'
 import { useT } from '@/lib/i18n'
@@ -189,6 +189,533 @@ function cleanAndParse(raw: string): AnsiSpan[] {
     // DEC private sequences not caught above (shouldn't remain but safety net)
     .replace(/\x1b[^\[\]][^\x1b]*/g, '')
   return parseAnsi(stripped)
+}
+
+// ── BuildJob types ─────────────────────────────────────────────────────────────
+
+interface BuildStep {
+  id: string
+  label: string
+  status: 'running' | 'ok' | 'err'
+  lines: string[]
+  elapsed?: string
+  userExpanded: boolean
+}
+
+interface BuildJob {
+  id: number
+  opLabel: string
+  status: 'running' | 'done' | 'error'
+  steps: BuildStep[]
+}
+
+// ── Spinner ────────────────────────────────────────────────────────────────────
+
+const SPIN_FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']
+
+function Spinner({ color = 'var(--fg-muted)' }: { color?: string }) {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setFrame(f => (f + 1) % SPIN_FRAMES.length), 90)
+    return () => clearInterval(id)
+  }, [])
+  return <span className="tabular-nums select-none" style={{ color }}>{SPIN_FRAMES[frame]}</span>
+}
+
+// ── StepRow ────────────────────────────────────────────────────────────────────
+
+function StepRow({ step, onToggle }: { step: BuildStep; onToggle: () => void }) {
+  const isRunning = step.status === 'running'
+  const isErr     = step.status === 'err'
+  const isOk      = step.status === 'ok'
+
+  // Determine whether we show the detail block
+  const showBlock = isRunning || isErr || step.userExpanded
+
+  // For running: last 4 lines. For error/expanded: all lines.
+  const displayLines = isRunning
+    ? step.lines.slice(-4)
+    : step.lines
+
+  return (
+    <div className="flex flex-col" style={{ gap: 0 }}>
+      {/* ── Step header row ── */}
+      <div
+        className="flex items-center gap-2 select-none group"
+        onClick={() => !isRunning && onToggle()}
+        role={!isRunning ? 'button' : undefined}
+        style={{
+          cursor: isRunning ? 'default' : 'pointer',
+          paddingLeft: 2,
+          minHeight: 20,
+        }}
+      >
+        {/* Icon */}
+        <span className="flex-shrink-0 w-4 flex items-center justify-center" style={{ fontSize: 11 }}>
+          {isRunning ? <Spinner />
+            : isOk   ? <span style={{ color: '#98c379' }}>✔</span>
+            :           <span style={{ color: '#e06c75' }}>✖</span>}
+        </span>
+
+        {/* Label */}
+        <span
+          style={{
+            color: isErr ? '#e06c75' : isOk ? 'var(--fg-muted)' : 'var(--fg)',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            flex: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {step.label}
+        </span>
+
+        {/* Elapsed (ok only) */}
+        {isOk && step.elapsed && (
+          <span style={{ color: 'var(--fg-faint)', fontSize: 10, flexShrink: 0, marginLeft: 8, fontFamily: 'var(--font-mono)' }}>
+            [{step.elapsed}]
+          </span>
+        )}
+
+        {/* Expand chevron for completed steps */}
+        {!isRunning && step.lines.length > 0 && (
+          <ChevronDown
+            size={11}
+            className="flex-shrink-0 opacity-0 group-hover:opacity-60 transition-all"
+            style={{
+              color: 'var(--fg-faint)',
+              transform: step.userExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.15s, opacity 0.15s',
+            }}
+          />
+        )}
+      </div>
+
+      {/* ── Detail block ── */}
+      {showBlock && displayLines.length > 0 && (
+        <div
+          className="ml-6 mt-0.5 mb-1 rounded overflow-hidden"
+          style={{
+            background: 'var(--surface-2)',
+            border: `1px solid ${isErr ? 'rgba(248,113,113,0.3)' : 'var(--border)'}`,
+          }}
+        >
+          {displayLines.map((line, i) => (
+            <div
+              key={i}
+              className="flex items-start px-2 py-px"
+              style={{ minHeight: 18 }}
+            >
+              <span
+                style={{
+                  color: 'var(--fg-faint)',
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  userSelect: 'none',
+                  flexShrink: 0,
+                  marginRight: 6,
+                  lineHeight: '18px',
+                }}
+              >
+                │
+              </span>
+              <span
+                className="whitespace-pre"
+                style={{
+                  color: /error|failed|cannot/i.test(line) ? '#e06c75'
+                       : /warning:/i.test(line)            ? '#e5c07b'
+                       : 'var(--fg-muted)',
+                  fontSize: 11,
+                  fontFamily: 'var(--font-mono)',
+                  lineHeight: '18px',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {line}
+              </span>
+            </div>
+          ))}
+          {/* Running paginaton hint */}
+          {isRunning && step.lines.length > 4 && (
+            <div className="px-2 py-px" style={{ color: 'var(--fg-faint)', fontSize: 9, fontFamily: 'var(--font-mono)', borderTop: '1px solid var(--border)', opacity: 0.6 }}>
+              ↑ {step.lines.length - 4} more line{step.lines.length - 4 !== 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── BuildJobView ───────────────────────────────────────────────────────────────
+
+function BuildJobView({ job, onToggleStep }: { job: BuildJob; onToggleStep: (id: string) => void }) {
+  const allDone = job.status !== 'running'
+
+  return (
+    <div className="px-3 py-2.5 flex flex-col" style={{ fontFamily: 'var(--font-mono)', gap: 2 }}>
+
+      {/* ── Top header ── */}
+      <div className="flex items-center gap-2 mb-1" style={{ color: 'var(--fg)', fontSize: 12 }}>
+        <span style={{ color: 'var(--fg-muted)', fontWeight: 500 }}>{job.opLabel}</span>
+        {job.status === 'running' && <Spinner />}
+      </div>
+
+      {/* ── All-done collapsed view ── */}
+      {allDone && !job.steps.some(s => s.status === 'err') && (
+        <div style={{ color: '#98c379', fontSize: 12 }}>
+          Done <span style={{ fontSize: 11 }}>✔</span>
+        </div>
+      )}
+
+      {/* ── All-done with errors ── */}
+      {allDone && job.steps.some(s => s.status === 'err') && (
+        <>
+          <div style={{ color: '#e06c75', fontSize: 12, marginBottom: 6 }}>
+            Failed <span style={{ fontSize: 11 }}>✖</span>
+          </div>
+          <div className="flex flex-col" style={{ gap: 2 }}>
+            {job.steps.map(step => (
+              <StepRow key={step.id} step={step} onToggle={() => onToggleStep(step.id)} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── Running: show all steps ── */}
+      {!allDone && (
+        <div className="flex flex-col" style={{ gap: 2 }}>
+          {job.steps.map(step => (
+            <StepRow key={step.id} step={step} onToggle={() => onToggleStep(step.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Output tab ────────────────────────────────────────────────────────────────
+
+function OutputTab() {
+  const { logs, clearLogs, problems, setProblems } = useStore()
+  const pendingBuild      = useStore(s => s.pendingBuild)
+  const clearPendingBuild = useStore(s => s.clearPendingBuild)
+  const projectPath       = useStore(s => s.projectPath)
+
+  // ── Build job state ──────────────────────────────────────────────────────────
+  const [buildJob, setBuildJob] = useState<BuildJob | null>(null)
+  const jobRef      = useRef<BuildJob | null>(null)     // mirror for mutation in callbacks
+  const accLinesRef = useRef<string[]>([])              // lines since last step completion
+  const accTitleRef = useRef<string>('')                // title from ╭ line
+  const stepIdRef   = useRef(0)
+  const projectPathRef = useStore(s => s.projectPath)
+
+  const endRef    = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [buildJob])
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  function syncJob(job: BuildJob) {
+    jobRef.current = job
+    setBuildJob({ ...job, steps: [...job.steps] })
+  }
+
+  function getOrCreateJob(opLabel: string): BuildJob {
+    if (jobRef.current) return jobRef.current
+    const job: BuildJob = { id: Date.now(), opLabel, status: 'running', steps: [] }
+    jobRef.current = job
+    return job
+  }
+
+  function ensureRunningStep(job: BuildJob, fallbackLabel = '…'): BuildStep {
+    const last = job.steps[job.steps.length - 1]
+    if (last?.status === 'running') return last
+    const step: BuildStep = {
+      id: `step-${stepIdRef.current++}`,
+      label: accTitleRef.current || fallbackLabel,
+      status: 'running',
+      lines: [...accLinesRef.current],
+      userExpanded: false,
+    }
+    accLinesRef.current = []
+    accTitleRef.current = ''
+    job.steps.push(step)
+    return step
+  }
+
+  function appendToRunningStep(job: BuildJob, line: string) {
+    const step = ensureRunningStep(job)
+    step.lines.push(line)
+  }
+
+  function completeCurrentStep(job: BuildJob, label: string, status: 'ok' | 'err', elapsed?: string) {
+    const last = job.steps[job.steps.length - 1]
+    if (last?.status === 'running') {
+      last.status  = status
+      last.elapsed = elapsed
+      if (label && label !== '…') last.label = label
+    } else {
+      // No running step — create a completed one from accumulator
+      const step: BuildStep = {
+        id: `step-${stepIdRef.current++}`,
+        label: label || accTitleRef.current || '…',
+        status,
+        elapsed,
+        lines: [...accLinesRef.current],
+        userExpanded: status === 'err',
+      }
+      job.steps.push(step)
+    }
+    accLinesRef.current = []
+    accTitleRef.current = ''
+  }
+
+  // ── Infer operation label from args ──────────────────────────────────────────
+  function inferOpLabel(args: string[]): string {
+    if (args.includes('upload') || args.includes('--upload')) return 'Uploading'
+    if (args.includes('check'))                                return 'Checking'
+    return 'Building'
+  }
+
+  // ── Compiler diagnostic parsing ───────────────────────────────────────────────
+  const COMPILER_DIAG = /^(.+?):(\d+):(\d+):\s+(error|warning|note|fatal error):\s+(.+)$/
+  const buildProblems = useRef<import('@/lib/store').Problem[]>([])
+  const seenDiags     = useRef(new Set<string>())
+
+  // ── pendingBuild handler ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!pendingBuild) return
+    const { cmd, args, cwd, chainArgs } = pendingBuild
+    clearPendingBuild()
+
+    // Reset job state for new build
+    jobRef.current      = null
+    accLinesRef.current = []
+    accTitleRef.current = ''
+    buildProblems.current = []
+    seenDiags.current.clear()
+
+    const opLabel = inferOpLabel(args)
+    const newJob  = getOrCreateJob(opLabel)
+    syncJob(newJob)
+
+    setProblems([])
+
+    // ── Traceback / dupe-block filters (same as before) ──
+    let inTraceback = false
+    let inDupeBlock = false
+
+    function stripAnsi(s: string): string {
+      return s
+        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+        .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')
+        .replace(/\x1b[^\[\]][^\x1b]*/g, '')
+    }
+
+    function cleanLines(raw: string): string[] {
+      return raw.split('\n').flatMap(seg => {
+        const parts   = seg.split('\r')
+        const visible = parts[parts.length - 1]
+        const clean   = stripAnsi(visible)
+        return clean ? [clean] : []
+      })
+    }
+
+    function processLine(raw: string) {
+      const t = raw.trimStart()
+
+      // Traceback box
+      if (t.startsWith('╭') && /Traceback/.test(t)) { inTraceback = true; return }
+      if (inTraceback) { if (t.startsWith('╰') && t.endsWith('╯')) inTraceback = false; return }
+
+      // Dupe block after ✖ tsuki-flash
+      if (/^[✖✗]/.test(t) && /tsuki-flash\b/.test(t) && !/\bfailed\b/.test(t)) {
+        inDupeBlock = true
+        // Still process this line as a failure marker below — fall through
+      }
+      if (inDupeBlock && !(/^[✖✗]/.test(t))) {
+        if (!t || /^[│─\s]/.test(t)) return
+        inDupeBlock = false
+      }
+
+      const job = jobRef.current!
+
+      // ── ✔ Step complete ok ────────────────────────────────────────────────────
+      if (/^[✔✓]/.test(t)) {
+        // Extract: ✔  label  [elapsed]
+        const m = t.match(/^[✔✓]\s+(.*?)(?:\s+\[([^\]]+)\])?\s*$/)
+        const label   = m?.[1]?.trim() ?? ''
+        const elapsed = m?.[2]?.trim()
+        completeCurrentStep(job, label, 'ok', elapsed)
+        syncJob(job)
+        return
+      }
+
+      // ── ✖ Step failed ─────────────────────────────────────────────────────────
+      if (/^[✖✗]/.test(t)) {
+        const label = t.replace(/^[✖✗]\s*/, '').replace(/\s+\[[^\]]+\]\s*$/, '').trim()
+        // If there's a running step, complete it as err; use remaining accLines as err output
+        completeCurrentStep(job, label, 'err')
+        // Auto-expand error step
+        const errStep = job.steps[job.steps.length - 1]
+        if (errStep) errStep.userExpanded = true
+        syncJob(job)
+        return
+      }
+
+      // ── [done] ────────────────────────────────────────────────────────────────
+      if (t === '[done]') {
+        job.status = 'done'
+        syncJob(job)
+        return
+      }
+
+      // ── [exit N] ──────────────────────────────────────────────────────────────
+      if (/^\[exit [^0]/.test(t)) {
+        job.status = 'error'
+        syncJob(job)
+        return
+      }
+
+      // ── ╭ Title ─── → new step block starting ─────────────────────────────────
+      if (/^╭/.test(t)) {
+        const title = t.replace(/^╭[\s─]*/, '').replace(/[\s─╮]*$/, '').trim()
+        if (title) accTitleRef.current = title
+        // Don't show ╭/╰ decoration lines
+        return
+      }
+      if (/^╰/.test(t)) return
+
+      // ── [ ⚡ label ] phase header ──────────────────────────────────────────────
+      if (/^\[[\s]*[⚡⚙🔧]/.test(t)) {
+        // Phase separator — don't show as a step line, just update the op label
+        return
+      }
+
+      // ── Empty ─────────────────────────────────────────────────────────────────
+      if (!t) return
+
+      // ── │ content line OR any other line → append to current step ─────────────
+      const contentLine = /^│/.test(t) ? t.replace(/^│\s*/, '') : raw
+      appendToRunningStep(job, contentLine)
+      syncJob(job)
+
+      // Compiler diagnostic → problems tab
+      const m = t.match(COMPILER_DIAG)
+      if (m && (m[4].startsWith('error') || m[4] === 'fatal error' || m[4] === 'warning')) {
+        const key = `${m[1]}:${m[2]}:${m[3]}:${m[4]}`
+        if (!seenDiags.current.has(key)) {
+          seenDiags.current.add(key)
+          buildProblems.current.push({
+            id: key,
+            severity: m[4] === 'warning' ? 'warning' : 'error',
+            file: m[1].replace(/\\/g, '/').split('/').pop() ?? m[1],
+            line: Number(m[2]),
+            col:  Number(m[3]),
+            message: m[5].trim(),
+          })
+          setProblems([...buildProblems.current])
+        }
+      }
+    }
+
+    const run = (cmdStr: string, argsArr: string[]): Promise<number> => {
+      return new Promise<number>(resolve => {
+        spawnProcess(cmdStr, argsArr, cwd ?? projectPath ?? undefined, (rawLine) => {
+          for (const line of cleanLines(rawLine)) processLine(line)
+        }).then(handle => {
+          handle.done.then(code => {
+            handle.dispose()
+            const job = jobRef.current
+            if (job) {
+              if (code !== 0 && job.status === 'running') { job.status = 'error'; syncJob(job) }
+              else if (code === 0 && job.status === 'running') { job.status = 'done'; syncJob(job) }
+            }
+            useStore.getState().refreshTree().catch(() => {})
+            resolve(code)
+          })
+        }).catch(e => {
+          const job = jobRef.current
+          if (job) {
+            appendToRunningStep(job, `[error: ${e}]`)
+            job.status = 'error'
+            syncJob(job)
+          }
+          resolve(1)
+        })
+      })
+    }
+
+    if (chainArgs) {
+      run(cmd, args).then(code => { if (code === 0) run(cmd, chainArgs) })
+    } else {
+      run(cmd, args)
+    }
+  }, [pendingBuild, clearPendingBuild]) // eslint-disable-line
+
+  // ── Toggle step expansion ─────────────────────────────────────────────────────
+  function toggleStep(stepId: string) {
+    setBuildJob(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        steps: prev.steps.map(s =>
+          s.id === stepId ? { ...s, userExpanded: !s.userExpanded } : s
+        ),
+      }
+    })
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────────
+  return (
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto min-h-0"
+      style={{ scrollbarWidth: 'thin' }}
+    >
+      {/* Non-build messages (startup, ready, etc.) */}
+      {logs.length > 0 && (
+        <div className="px-3 pt-2 pb-1 flex flex-col gap-0.5">
+          {logs.map(l => (
+            <div
+              key={l.id}
+              className="font-mono text-[11px] leading-[18px]"
+              style={{
+                color: l.type === 'ok'   ? '#98c379'
+                     : l.type === 'err'  ? '#e06c75'
+                     : l.type === 'warn' ? '#e5c07b'
+                     : 'var(--fg-muted)',
+              }}
+            >
+              {l.msg}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Build job */}
+      {buildJob && (
+        <BuildJobView job={buildJob} onToggleStep={toggleStep} />
+      )}
+
+      {/* Empty state */}
+      {!buildJob && logs.length === 0 && (
+        <div className="flex items-center px-3 py-3">
+          <span className="text-xs" style={{ color: 'var(--fg-faint)' }}>No output yet.</span>
+        </div>
+      )}
+
+      <div ref={endRef} />
+    </div>
+  )
 }
 
 // ── TermLine ──────────────────────────────────────────────────────────────────
@@ -674,150 +1201,6 @@ function TermView({ session, projectPath, onAlive, onRunning }: TermViewProps) {
 
 function Terminal() {
   const { projectPath, pendingCommand, clearPendingCommand } = useStore()
-  const pendingBuild     = useStore(s => s.pendingBuild)
-  const clearPendingBuild = useStore(s => s.clearPendingBuild)
-
-  // ── pendingBuild: streams output to Output (addLog) tab, not the terminal ─
-  useEffect(() => {
-    if (!pendingBuild) return
-    const { cmd, args, cwd, chainArgs } = pendingBuild
-    clearPendingBuild()
-
-    const { addLog, setBottomTab, setProblems } = useStore.getState()
-    setBottomTab('output')
-    setProblems([])
-
-    // Compiler diagnostic regex: path:line:col: (error|warning|note): message
-    const COMPILER_DIAG = /^(.+?):(\d+):(\d+):\s+(error|warning|note|fatal error):\s+(.+)$/
-    const buildProblems: import('@/lib/store').Problem[] = []
-    let problemId   = 0
-    // Tracks whether we're inside a Traceback box (stderr artifact from tsuki-flash)
-    let inTraceback   = false
-    // After "✖  tsuki-flash compile --board ..." tsuki-flash re-prints the full │ block.
-    // We suppress that duplicate block until a non-│ / non-separator line appears.
-    let inDupeBlock   = false
-    // Deduplicate compiler diagnostic lines (appear in both the inline box and the dupe block)
-    const seenDiags   = new Set<string>()
-
-    function processLine(raw: string): { skip: boolean; type: import('@/lib/store').LogLine['type'] } {
-      const t = raw.trimStart()
-
-      // ── Traceback box ─────────────────────────────────────────────────────────
-      if (t.startsWith('╭') && /Traceback/.test(t)) {
-        inTraceback = true
-        return { skip: true, type: 'info' }
-      }
-      if (inTraceback) {
-        if (t.startsWith('╰') && t.endsWith('╯')) inTraceback = false
-        return { skip: true, type: 'info' }
-      }
-
-      // ── Duplicate │ block after "✖  tsuki-flash <cmd>" ───────────────────────
-      // tsuki-flash prints:  ✖  tsuki-flash compile --board ...
-      // then re-dumps the │  ... block again before printing CompileError: / [exit N]
-      // Detect the trigger: ✖ line that contains "tsuki-flash" but is NOT "... failed"
-      if (/^[✖✗]/.test(t) && /tsuki-flash\b/.test(t) && !/\bfailed\b/.test(t)) {
-        inDupeBlock = true
-        return { skip: false, type: 'err' }   // show the ✖ header itself
-      }
-      if (inDupeBlock) {
-        // │ lines, separator dashes, blank → suppress
-        if (!t || /^[│─\s]/.test(t)) return { skip: true, type: 'info' }
-        // anything else (CompileError:, ✖ ...failed, ╰) ends the dupe block
-        inDupeBlock = false
-      }
-
-      // ── Empty ─────────────────────────────────────────────────────────────────
-      if (!t) return { skip: true, type: 'info' }
-
-      // ── Explicit markers ──────────────────────────────────────────────────────
-      if (/^[✔✓]/.test(t) || t === '[done]') return { skip: false, type: 'ok' }
-      if (/CompileError:/.test(t) || /^\[exit [^0]/.test(t) || /^\[error:/.test(t))
-        return { skip: false, type: 'err' }
-      if (/\bcompilation failed\b/i.test(t) || /\blink failed\b/i.test(t))
-        return { skip: false, type: 'err' }
-
-      // ── Compiler diagnostic lines ─────────────────────────────────────────────
-      if (COMPILER_DIAG.test(t)) {
-        const m = t.match(COMPILER_DIAG)!
-        const key = `${m[1]}:${m[2]}:${m[3]}:${m[4]}`
-        const isDupe = seenDiags.has(key)
-        seenDiags.add(key)
-        return { skip: isDupe, type: m[4].startsWith('error') || m[4] === 'fatal error' ? 'err' : 'warn' }
-      }
-
-      return { skip: false, type: 'info' }
-    }
-
-    // Clean a raw output line for the Output tab:
-    //   1. Split on \n first — a single IPC event can contain multiple logical lines
-    //      (tsuki-ux table rows, multi-line error blocks, etc.)
-    //   2. For each sub-line, handle \r (spinner overwrite): keep text after last \r
-    //   3. Strip ANSI escape sequences — the Output tab applies its own CSS colors
-    function stripAnsi(s: string): string {
-      return s
-        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC
-        .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '') // CSI (colors, cursor)
-        .replace(/\x1b[^\[\]][^\x1b]*/g, '') // DEC / other
-    }
-    function cleanOutputLines(raw: string): string[] {
-      // Split on \n (handles CRLF too), then for each segment resolve \r overwrites
-      return raw.split('\n').flatMap(segment => {
-        const crParts = segment.split('\r')
-        // Each \r resets the cursor to the start of the line (spinner animation).
-        // The last part is what the user actually sees on screen.
-        const visible = crParts[crParts.length - 1]
-        const clean   = stripAnsi(visible)
-        return clean ? [clean] : []
-      })
-    }
-
-    const run = (cmdStr: string, argsArr: string[]): Promise<number> => {
-      addLog('info', `> ${[cmdStr, ...argsArr].join(' ')}`)
-      return new Promise<number>(resolve => {
-        spawnProcess(cmdStr, argsArr, cwd ?? projectPathRef.current ?? undefined, (rawLine, _isErr) => {
-          const lines = cleanOutputLines(rawLine)
-          for (const line of lines) {
-          const { skip, type } = processLine(line)
-          if (skip) continue
-          addLog(type, line)
-          const m = line.trimStart().match(COMPILER_DIAG)
-          if (m && (m[4].startsWith('error') || m[4] === 'fatal error' || m[4] === 'warning')) {
-            const key = `${m[1]}:${m[2]}:${m[3]}:${m[4]}`
-            if (!buildProblems.some(p => p.id === key)) {
-              buildProblems.push({
-                id: key,
-                severity: m[4] === 'warning' ? 'warning' : 'error',
-                file: m[1].replace(/\\/g, '/').split('/').pop() ?? m[1],
-                line: Number(m[2]),
-                col: Number(m[3]),
-                message: m[5].trim(),
-              })
-              setProblems([...buildProblems])
-            }
-          }
-          } // end for (const line of lines)
-        }).then(handle => {
-          handle.done.then(code => {
-            handle.dispose()
-            if (code !== 0) addLog('err', `[exit ${code}]`)
-            else addLog('ok', '[done]')
-            useStore.getState().refreshTree().catch(() => {})
-            resolve(code)
-          })
-        }).catch(e => {
-          addLog('err', `[error: ${e}]`)
-          resolve(1)
-        })
-      })
-    }
-
-    if (chainArgs) {
-      run(cmd, args).then(code => { if (code === 0) run(cmd, chainArgs) })
-    } else {
-      run(cmd, args)
-    }
-  }, [pendingBuild, clearPendingBuild]) // eslint-disable-line
   const t = useT()
   const [shells,        setShells       ] = useState<ShellInfo[]>([])
   const [sessions,      setSessions     ] = useState<PtySession[]>([])
@@ -1058,70 +1441,11 @@ function SectionHeader({ label }: { label: string }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BottomPanel() {
-  const { bottomTab, setBottomTab, logs, clearLogs, problems, bottomHeight } = useStore()
+  const { bottomTab, setBottomTab, clearLogs, problems, bottomHeight } = useStore()
   const t = useT()
-  const endRef = useRef<HTMLDivElement>(null)
-
-  // ── Output filter state ───────────────────────────────────────────────────
-  const [logFilter,   setLogFilter]   = useState<'all' | 'ok' | 'err' | 'warn' | 'info'>('all')
-  const [logSearch,   setLogSearch]   = useState('')
-  const [showSearch,  setShowSearch]  = useState(false)
-  const [autoScroll,  setAutoScroll]  = useState(true)
-  const searchRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (bottomTab === 'output' && autoScroll) {
-      endRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [logs, bottomTab, autoScroll])
-
-  useEffect(() => {
-    if (showSearch) searchRef.current?.focus()
-  }, [showSearch])
 
   const errCount  = problems.filter(p => p.severity === 'error').length
   const warnCount = problems.filter(p => p.severity === 'warning').length
-
-  // ── Log counters ──────────────────────────────────────────────────────────
-  const logCounts = {
-    ok:   logs.filter(l => l.type === 'ok').length,
-    err:  logs.filter(l => l.type === 'err').length,
-    warn: logs.filter(l => l.type === 'warn').length,
-    info: logs.filter(l => l.type === 'info').length,
-  }
-
-  // ── Filtered logs ─────────────────────────────────────────────────────────
-  const filteredLogs = logs.filter(l => {
-    if (logFilter !== 'all' && l.type !== logFilter) return false
-    if (logSearch && !l.msg.toLowerCase().includes(logSearch.toLowerCase())) return false
-    return true
-  })
-
-  function copyLogs() {
-    const text = filteredLogs.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n')
-    navigator.clipboard.writeText(text).catch(() => {})
-  }
-
-  const LOG_ICON: Record<string, React.ReactNode> = {
-    ok:   <span className="text-green-400  select-none" style={{ fontSize: 10 }}>✔</span>,
-    err:  <span className="text-red-400    select-none" style={{ fontSize: 10 }}>✖</span>,
-    warn: <span className="text-yellow-400 select-none" style={{ fontSize: 10 }}>▲</span>,
-    info: <span className="select-none" style={{ color: 'var(--fg-faint)', fontSize: 10 }}>›</span>,
-  }
-
-  const LOG_ACCENT: Record<string, string> = {
-    ok:   'transparent',
-    err:  'rgba(248,113,113,0.10)',
-    warn: 'rgba(251,191,36,0.07)',
-    info: 'transparent',
-  }
-
-  const LOG_LEFT_BAR: Record<string, string> = {
-    ok:   'transparent',
-    err:  'rgb(248 113 113 / 0.55)',
-    warn: 'rgb(251 191 36 / 0.45)',
-    info: 'transparent',
-  }
 
   return (
     <div className="flex flex-col border-t border-[var(--chrome-border)] bg-[var(--chrome-bg)] flex-shrink-0 relative"
@@ -1146,57 +1470,13 @@ export default function BottomPanel() {
                 {warnCount > 0 && <span className="text-yellow-400">{warnCount}</span>}
               </span>
             )}
-            {tab.id === 'output' && logCounts.err > 0 && (
-              <span className="text-2xs font-mono text-red-400">{logCounts.err}</span>
-            )}
           </button>
         ))}
         <div className="flex-1" />
 
         {/* Output toolbar */}
         {bottomTab === 'output' && (
-          <div className="flex items-center gap-0.5">
-            {/* Type filter pills */}
-            <div className="flex items-center gap-px mr-1">
-              {(['all', 'err', 'warn', 'ok', 'info'] as const).map(f => (
-                <button key={f} onClick={() => setLogFilter(f)}
-                  className={clsx(
-                    'px-1.5 py-0.5 text-[9px] font-mono rounded border-0 cursor-pointer transition-colors',
-                    logFilter === f
-                      ? f === 'err'  ? 'bg-red-500/20 text-red-400'
-                      : f === 'warn' ? 'bg-yellow-500/20 text-yellow-400'
-                      : f === 'ok'   ? 'bg-green-500/20 text-green-400'
-                      : f === 'info' ? 'bg-[var(--active)] text-[var(--fg-muted)]'
-                                     : 'bg-[var(--active)] text-[var(--fg)]'
-                      : 'bg-transparent text-[var(--fg-faint)] hover:text-[var(--fg)]',
-                  )}>
-                  {f === 'all'
-                    ? `all ${logs.length}`
-                    : f === 'err'  ? `err ${logCounts.err}`
-                    : f === 'warn' ? `warn ${logCounts.warn}`
-                    : f === 'ok'   ? `ok ${logCounts.ok}`
-                    : `info ${logCounts.info}`}
-                </button>
-              ))}
-            </div>
-
-            {/* Search toggle */}
-            <IconBtn tooltip="Search logs" onClick={() => setShowSearch(s => !s)}>
-              <Filter size={11} className={showSearch ? 'text-blue-400' : ''} />
-            </IconBtn>
-
-            {/* Auto-scroll toggle */}
-            <IconBtn tooltip={autoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF'}
-              onClick={() => setAutoScroll(s => !s)}>
-              <ChevronDown size={11} className={autoScroll ? 'text-green-400' : 'text-[var(--fg-faint)]'} />
-            </IconBtn>
-
-            {/* Copy */}
-            <IconBtn tooltip="Copy visible logs" onClick={copyLogs}>
-              <Copy size={11} />
-            </IconBtn>
-
-            {/* Clear */}
+          <div className="flex items-center gap-1">
             <IconBtn tooltip="Clear output" onClick={clearLogs}>
               <Trash2 size={11} />
             </IconBtn>
@@ -1205,177 +1485,7 @@ export default function BottomPanel() {
       </div>
 
       {/* ── Output tab ── */}
-      {bottomTab === 'output' && (
-        <div className="flex flex-col flex-1 overflow-hidden min-h-0">
-
-          {/* Search bar */}
-          {showSearch && (
-            <div className="flex items-center gap-1.5 px-3 py-1 border-b border-[var(--border)] bg-[var(--surface)] flex-shrink-0">
-              <Filter size={9} className="text-[var(--fg-faint)] flex-shrink-0" />
-              <input
-                ref={searchRef}
-                value={logSearch}
-                onChange={e => setLogSearch(e.target.value)}
-                onKeyDown={e => e.key === 'Escape' && (setShowSearch(false), setLogSearch(''))}
-                placeholder="Filter log messages…"
-                className="flex-1 text-xs bg-transparent outline-none text-[var(--fg)] placeholder-[var(--fg-faint)]"
-              />
-              {logSearch && (
-                <span className="text-[9px] text-[var(--fg-faint)] font-mono">
-                  {filteredLogs.length} / {logs.length}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Log list */}
-          <div className="flex-1 overflow-y-auto overflow-x-auto px-3 py-1.5 min-h-0"
-            style={{ scrollbarWidth: 'thin' }}
-            onScroll={e => {
-              const el = e.currentTarget
-              const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-              setAutoScroll(atBottom)
-            }}>
-            {!filteredLogs.length && (
-              <span className="text-xs text-[var(--fg-faint)]">
-                {logs.length === 0 ? 'No output yet.' : 'No entries match the current filter.'}
-              </span>
-            )}
-            {(() => {
-              // Group consecutive box-drawing lines into single card blocks
-              type Group =
-                | { kind: 'line'; log: typeof filteredLogs[0] }
-                | { kind: 'box';  lines: typeof filteredLogs }
-
-              const groups: Group[] = []
-              let boxLines: typeof filteredLogs = []
-
-              const isBoxLine = (msg: string) =>
-                /^[\s]*[╭╰│▶…·─]/.test(msg) && !/^CompileError:/.test(msg.trim())
-
-              const flushBox = () => {
-                if (boxLines.length) {
-                  groups.push({ kind: 'box', lines: boxLines })
-                  boxLines = []
-                }
-              }
-
-              for (const l of filteredLogs) {
-                if (isBoxLine(l.msg)) {
-                  boxLines.push(l)
-                } else {
-                  flushBox()
-                  groups.push({ kind: 'line', log: l })
-                }
-              }
-              flushBox()
-
-              // Track section headers so we only emit each once
-              let lastSection: 'build' | 'output' | null = null
-
-              return groups.map((g, gi) => {
-                if (g.kind === 'box') {
-                  // Box-drawing groups = BUILD output (tsuki build/check output)
-                  const showHeader = lastSection !== 'build'
-                  lastSection = 'build'
-                  const hasErr  = g.lines.some(l => l.type === 'err')
-                  const hasWarn = g.lines.some(l => l.type === 'warn')
-                  const accentColor = hasErr
-                    ? 'rgb(248 113 113 / 0.4)'
-                    : hasWarn
-                    ? 'rgb(251 191 36 / 0.35)'
-                    : 'var(--border)'
-                  const cardBg = hasErr
-                    ? 'rgba(248,113,113,0.04)'
-                    : hasWarn
-                    ? 'rgba(251,191,36,0.03)'
-                    : 'var(--surface-2)'
-
-                  const boxCard = (
-                    <div key={`box-${gi}`}
-                      className="my-1 rounded-md overflow-hidden font-mono text-xs leading-[17px]"
-                      style={{
-                        background: cardBg,
-                        border: `1px solid ${accentColor}`,
-                      }}>
-                      {g.lines.map(l => {
-                        const isSep = /^[\s]*[─]+/.test(l.msg)
-                        return (
-                          <div key={l.id}
-                            className="group flex cursor-default hover:bg-white/[0.025] transition-colors"
-                            style={{ paddingLeft: '10px', paddingRight: '6px' }}>
-                            <span
-                              className="flex-1 min-w-0 whitespace-pre py-px"
-                              style={{
-                                color: l.type === 'err'  ? '#e06c75'
-                                     : l.type === 'ok'   ? '#98c379'
-                                     : l.type === 'warn' ? '#e5c07b'
-                                     : isSep ? 'var(--fg-faint)'
-                                     : 'var(--fg-muted)',
-                                opacity: isSep ? 0.35 : 1,
-                              }}>
-                              {l.msg}
-                            </span>
-                            <button
-                              onClick={() => navigator.clipboard.writeText(l.msg).catch(() => {})}
-                              className="opacity-0 group-hover:opacity-100 w-4 h-4 flex items-center justify-center text-[var(--fg-faint)] hover:text-[var(--fg)] cursor-pointer border-0 bg-transparent flex-shrink-0 transition-opacity self-center ml-1"
-                              title="Copy line">
-                              <Copy size={9} />
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                  return showHeader
-                    ? [<SectionHeader key={`hdr-build-${gi}`} label="BUILD" />, boxCard]
-                    : boxCard
-                }
-
-                // Regular single-line log entry
-                const l = g.log
-                const showOutHdr = lastSection !== 'output'
-                lastSection = 'output'
-                const bg  = LOG_ACCENT[l.type]  ?? 'transparent'
-                const bar = LOG_LEFT_BAR[l.type] ?? 'transparent'
-                const lineEl = (
-                  <div key={l.id}
-                    className="flex gap-2 font-mono text-xs leading-[17px] hover:bg-[var(--hover)] rounded group cursor-default"
-                    style={{
-                      borderLeft: `2px solid ${bar}`,
-                      background: bg,
-                      paddingLeft: bar !== 'transparent' ? '6px' : '4px',
-                      paddingRight: '4px',
-                      marginBottom: l.type === 'err' || l.type === 'warn' ? 1 : 0,
-                      borderRadius: 4,
-                    }}>
-                    <span className="text-[var(--fg-faint)] flex-shrink-0 select-none w-14 text-right" style={{ fontSize: 9, paddingTop: 2 }}>{l.time}</span>
-                    <span className="flex-shrink-0 w-3 flex items-center">{LOG_ICON[l.type]}</span>
-                    <span className={clsx('flex-1 min-w-0 whitespace-pre', {
-                      'text-green-400':  l.type === 'ok',
-                      'text-red-400':    l.type === 'err',
-                      'text-yellow-400': l.type === 'warn',
-                    })}
-                    style={{
-                      color: (l.type === 'ok' || l.type === 'err' || l.type === 'warn') ? undefined : 'var(--fg-muted)',
-                    }}>{l.msg}</span>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(l.msg).catch(() => {})}
-                      className="opacity-0 group-hover:opacity-100 w-4 h-4 flex items-center justify-center text-[var(--fg-faint)] hover:text-[var(--fg)] cursor-pointer border-0 bg-transparent flex-shrink-0 transition-opacity"
-                      title="Copy line">
-                      <Copy size={9} />
-                    </button>
-                  </div>
-                )
-                return showOutHdr
-                  ? [<SectionHeader key={`hdr-output-${gi}`} label="OUTPUT" />, lineEl]
-                  : lineEl
-              })
-            })()}
-            <div ref={endRef} />
-          </div>
-        </div>
-      )}
+      {bottomTab === 'output' && <OutputTab />}
 
       {bottomTab === 'problems' && <ProblemsTab />}
 

@@ -1,0 +1,29 @@
+[package]
+name        = "{{.Name}}"
+version     = "{{.Version}}"
+description = "{{.Description}}"
+author      = "{{.Author}}"
+cpp_header  = "{{.CppHeader}}"
+arduino_lib = "{{.ArduinoLib}}"
+{{- if .CppClass}}
+cpp_class   = "{{.CppClass}}"
+{{- end}}
+{{- if .Aliases}}
+
+aliases = [{{range $i, $a := .Aliases}}{{if $i}}, {{end}}"{{$a}}"{{end}}]
+{{- end}}
+{{range .Functions}}
+[[function]]
+go     = "{{.Go}}"
+python = "{{.Python}}"
+cpp    = "{{.Cpp}}"
+{{end -}}
+{{range .Constants}}
+[[constant]]
+go     = "{{.Go}}"
+python = "{{.Python}}"
+cpp    = "{{.Cpp}}"
+{{end -}}
+
+[[example]]
+dir = "examples/basic"

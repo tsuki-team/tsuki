@@ -1,0 +1,47 @@
+# {{.Name}}
+
+{{.Description}}
+
+---
+
+## Installation
+
+```
+tsuki pkg install {{.Name}}
+```
+
+---
+
+## Usage
+
+```go
+import "{{.Name}}"
+```
+
+---
+
+## API Reference
+{{if .Functions}}
+### Functions
+
+| Go | Python | C++ template |
+|---|---|---|
+{{- range .Functions}}
+| `{{.Go}}` | `{{.Python}}` | `{{.Cpp}}` |
+{{- end}}
+{{end -}}
+{{if .Constants}}
+### Constants
+
+| Go | Python | C++ |
+|---|---|---|
+{{- range .Constants}}
+| `{{.Go}}` | `{{.Python}}` | `{{.Cpp}}` |
+{{- end}}
+{{end -}}
+
+---
+
+## Examples
+
+See `examples/basic` in this package.

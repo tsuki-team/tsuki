@@ -1,0 +1,20 @@
+[board]
+id             = "{{.ID}}"
+name           = "{{.Name}}"
+version        = "{{.Version}}"
+fqbn           = "{{.FQBN}}"
+{{- if .Variant}}
+variant        = "{{.Variant}}"
+{{- end}}
+flash_kb       = {{.FlashKB}}
+ram_kb         = {{.RAMKB}}
+toolchain_type = "{{.Toolchain.Type}}"
+{{- if .Defines}}
+defines        = "{{join .Defines ","}}"
+{{- end}}
+
+[{{.Toolchain.Type}}]
+mcu        = "{{.Toolchain.MCU}}"
+f_cpu      = {{.Toolchain.FCPU}}
+programmer = "{{.Toolchain.Programmer}}"
+baud       = {{.Toolchain.Baud}}

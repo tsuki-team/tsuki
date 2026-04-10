@@ -78,9 +78,16 @@ There are **three binaries** built from this repo:
 │   ├── boards.json         ← Registry index
 │   └── <id>/v<ver>/        ← tsukiboard.toml, sandbox.json, ports.json, README.md
 │
-├── pkg/                    ← tsukilib package registry (bundled packages)
+├── pkg/                    ← tsukilib package registry (git submodule → tsuki-pkg)
 │   ├── packages.json
-│   └── <n>/v<semver>/
+│   ├── boards.json
+│   ├── libs/
+│   │   └── <n>/v<semver>/
+│   │       ├── godotinolib.toml
+│   │       └── examples/
+│   └── boards/
+│       └── <id>/v<semver>/
+│           └── tsuki_board.toml
 │       ├── godotinolib.toml
 │       └── examples/
 │
@@ -212,12 +219,39 @@ cd cli && go build ./cmd/tsuki/...
 cargo build --bin tsuki-flash
 ```
 
-### Adding a tsukilib package (`pkg/`)
+### Adding a tsukilib package (`pkg/` — submodule `tsuki-pkg`)
 
-1. Create `pkg/<n>/README.md`
-2. Create `pkg/<n>/v1.0.0/godotinolib.toml` (see template in examples/new-package.toml)
-3. Add at least one example under `pkg/<n>/v1.0.0/examples/`
-4. Register in `pkg/packages.json`
+`/pkg` is a **git submodule** pointing to `github.com/tsuki-team/tsuki-pkg`. All
+library and board packages live in that separate repo; the monorepo just references
+it. In development you work directly inside the submodule directory.
+
+**Library packages** (`tsuki-pkg/libs/<n>/`):
+
+1. Create `pkg/libs/<n>/README.md`
+2. Create `pkg/libs/<n>/v1.0.0/godotinolib.toml` (see template in examples/new-package.toml)
+3. Add at least one example under `pkg/libs/<n>/v1.0.0/examples/basic/main.go`
+4. Register in `pkg/packages.json` (and `tsuki-pkg/packages.json`) with URLs pointing to
+   `https://raw.githubusercontent.com/tsuki-team/tsuki-pkg/main/libs/<n>/...`
+
+**Board packages** (`tsuki-pkg/boards/<id>/`):
+
+1. Create `pkg/boards/<id>/README.md`
+2. Create `pkg/boards/<id>/v1.0.0/tsuki_board.toml`
+3. Register in `pkg/boards.json` (and `tsuki-pkg/boards.json`)
+
+**Remote install (binary distribution — no submodule):**
+
+When `tsuki pkg install <n>` runs without the submodule present, the CLI fetches
+`godotinolib.toml` from `PkgRegistryURL` (default: GitHub raw `tsuki-team/tsuki-pkg/main`)
+and caches it in `~/.cache/tsuki/pkg/<n>/<version>/`. tsuki-core then loads from cache
+transparently via `load_all_with_cache()` in `src/runtime/pkg_loader.rs`.
+
+```bash
+# Verify registry entry
+tsuki pkg search <n>
+# Install from registry (fetches remote if no submodule)
+tsuki pkg install <n>
+```
 
 ### Web IDE (`ide/`)
 
@@ -260,7 +294,7 @@ cd ide && npm install && npm run dev
 | Add/change a manifest field | `cli/internal/manifest/manifest.go` |
 | Add a new board (static) | `flash/boards.rs` + `flash/compile/<arch>.rs` |
 | Add a new board platform (downloadable) | `boards/<id>/v<ver>/` — see `references/board-platforms.md` |
-| Add a new tsukilib package | `pkg/<n>/` |
+| Add a new tsukilib package | `pkg/libs/<n>/` (submodule: `tsuki-pkg`) |
 | Fix/improve a checker pass | `src/checker/` — read `references/checker-v2.md` first |
 | Fix/improve an error message | `src/error.rs` + call site |
 | Change release build steps | `tools/build.py` |
@@ -276,7 +310,7 @@ cd ide && npm install && npm run dev
 3. **`godotinolib.toml` is the single source of truth for a package's API surface.**
 4. **The transpiler must be deterministic.** Same input → identical C++ output every time.
 5. **Error spans must always carry file + line + col.** The rich traceback renderer requires all three.
-6. **Packages in `pkg/` must include at least one Go example.** The IDE uses them for live previews.
+6. **Packages in `pkg/libs/` must include at least one Go example.** The IDE uses them for live previews.
 7. **Never hardcode hex colors in the IDE.** Always `var(--token)` — see the design system section below.
 
 ---

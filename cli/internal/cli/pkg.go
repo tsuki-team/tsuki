@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tsuki/cli/internal/manifest"
 	"github.com/tsuki/cli/internal/pkgmgr"
+	"github.com/tsuki/cli/internal/scaffold"
 	"github.com/tsuki/cli/internal/ui"
 )
 
@@ -35,8 +37,158 @@ Declared packages in goduino.json are automatically loaded during
 		newPkgSearchCmd(),
 		newPkgAddCmd(),
 		newPkgInfoCmd(),
+		newPkgScaffoldCmd(),
 	)
 	return cmd
+}
+
+// ── pkg scaffold ──────────────────────────────────────────────────────────────
+
+func newPkgScaffoldCmd() *cobra.Command {
+	var (
+		fromSpec string
+		outDir   string
+		dryRun   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "scaffold [name]",
+		Short: "Scaffold a new tsukilib package",
+		Long: `Generate all files for a new tsukilib package.
+
+In interactive mode, tsuki asks for description, cpp_header, functions, etc.
+In spec mode (--from), reads a YAML spec file and generates headlessly.
+
+Generated files:
+  libs/<name>/README.md
+  libs/<name>/v<version>/godotinolib.toml
+  libs/<name>/v<version>/examples/basic/main.go
+  libs/<name>/v<version>/examples/basic/tsuki_example.json
+
+Also updates packages.json automatically.`,
+		Example: `  tsuki pkg scaffold hcsr04
+  tsuki pkg scaffold --from specs/hcsr04.yaml
+  tsuki pkg scaffold --from specs/libs/`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if outDir == "" {
+				outDir = findTsukiPkgDir()
+			}
+
+			opts := scaffold.ScaffoldPkgOptions{
+				OutDir: outDir,
+				DryRun: dryRun,
+			}
+
+			// ── Spec mode (--from) ────────────────────────────────────────
+			if fromSpec != "" {
+				info, err := os.Stat(fromSpec)
+				if err != nil {
+					return fmt.Errorf("--from: %w", err)
+				}
+
+				var specs []*scaffold.PkgSpec
+				if info.IsDir() {
+					specs, err = scaffold.LoadPkgSpecsFromDir(fromSpec)
+					if err != nil {
+						return err
+					}
+				} else {
+					s, err := scaffold.LoadPkgSpec(fromSpec)
+					if err != nil {
+						return err
+					}
+					specs = []*scaffold.PkgSpec{s}
+				}
+
+				if len(specs) == 0 {
+					ui.Warn("No spec files found in " + fromSpec)
+					return nil
+				}
+
+				ui.SectionTitle("Scaffolding packages")
+				fmt.Println()
+				for _, s := range specs {
+					sp := ui.NewSpinner(fmt.Sprintf("  %s@%s", s.Name, s.Version))
+					sp.Start()
+					result, err := scaffold.ScaffoldPkg(s, opts)
+					if err != nil {
+						sp.Stop(false, err.Error())
+						return err
+					}
+					sp.Stop(true, fmt.Sprintf("libs/%s/v%s/ (%d files)", result.Name, result.Version, len(result.Files)))
+				}
+				fmt.Println()
+				ui.Info(fmt.Sprintf("packages.json updated → %s", opts.OutDir+"/packages.json"))
+				return nil
+			}
+
+			// ── Interactive mode ──────────────────────────────────────────
+			if len(args) == 0 {
+				return fmt.Errorf("provide a package name or use --from <spec.yaml>")
+			}
+			name := args[0]
+
+			ui.SectionTitle(fmt.Sprintf("Scaffold package: %s", name))
+			spec, err := scaffold.PromptPkgSpec(name)
+			if err != nil {
+				return err
+			}
+
+			fmt.Println()
+			sp := ui.NewSpinner(fmt.Sprintf("Generating %s@%s…", spec.Name, spec.Version))
+			sp.Start()
+			result, err := scaffold.ScaffoldPkg(spec, opts)
+			if err != nil {
+				sp.Stop(false, err.Error())
+				return err
+			}
+			sp.Stop(true, "done")
+			fmt.Println()
+
+			ui.SectionTitle("Generated files")
+			fmt.Println()
+			for _, f := range result.Files {
+				ui.Success("  ✓ " + f)
+			}
+			fmt.Println()
+			ui.Success("packages.json updated")
+			fmt.Println()
+			ui.Info(fmt.Sprintf("Install locally: tsuki pkg install %s", spec.Name))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&fromSpec, "from", "", "path to a pkg-spec.yaml or directory of specs")
+	cmd.Flags().StringVar(&outDir, "out", "", "tsuki-pkg root dir (default: auto-detect pkg/ submodule)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be generated without writing files")
+	return cmd
+}
+
+// findTsukiPkgDir busca el directorio tsuki-pkg empezando desde el cwd.
+// Busca primero un directorio pkg/ (submodule), luego tsuki-pkg/.
+func findTsukiPkgDir() string {
+	cwd, _ := os.Getwd()
+	// Sube hasta encontrar un directorio con packages.json
+	dir := cwd
+	for i := 0; i < 5; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "pkg", "packages.json")); err == nil {
+			return filepath.Join(dir, "pkg")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "tsuki-pkg", "packages.json")); err == nil {
+			return filepath.Join(dir, "tsuki-pkg")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "packages.json")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	// Fallback: usa cwd
+	return cwd
 }
 
 // ── pkg install ───────────────────────────────────────────────────────────────
@@ -66,10 +218,11 @@ func newPkgInstallCmd() *cobra.Command {
 			var pkg *pkgmgr.InstalledPackage
 			var err error
 
-			// If it's a bare name (no slashes or dots), use the registry
+			// If it's a bare name (no slashes or dots), use the registry with
+			// tsuki-pkg fallback (Epic 11: InstallFromRegistryOrTsukiPkg).
 			if !strings.Contains(source, "/") && !strings.HasPrefix(source, ".") &&
 				!strings.HasPrefix(source, "http://") && !strings.HasPrefix(source, "https://") {
-				pkg, err = pkgmgr.InstallFromRegistry(source, version)
+				pkg, err = pkgmgr.InstallFromRegistryOrTsukiPkg(source, version)
 			} else {
 				pkg, err = pkgmgr.Install(pkgmgr.InstallOptions{
 					Source:  source,

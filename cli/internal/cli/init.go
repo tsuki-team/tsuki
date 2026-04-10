@@ -430,14 +430,14 @@ func runWizard(prefillName, prefillBoard, prefillBackend, prefillLanguage string
 	printLine()
 	fmt.Println()
 
-	return scaffold(projectName, lang, board, backend, tmpl, gitInit)
+	return scaffoldProject(projectName, lang, board, backend, tmpl, gitInit)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Scaffold
 // ─────────────────────────────────────────────────────────────────────────────
 
-func scaffold(name string, lang langChoice, board boardChoice, backend backendChoice, tmpl templateChoice, gitInit bool) error {
+func scaffoldProject(name string, lang langChoice, board boardChoice, backend backendChoice, tmpl templateChoice, gitInit bool) error {
 	dir := filepath.Join(projectDir(), name)
 	srcDir := filepath.Join(dir, "src")
 

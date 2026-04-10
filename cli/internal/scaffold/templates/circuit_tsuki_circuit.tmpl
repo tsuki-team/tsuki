@@ -1,0 +1,30 @@
+{
+  "version": "1",
+  "name": "{{.Title}}",
+  "board": "{{.Board}}",
+  "description": "{{.Description}}",
+  "components": [
+    {
+      "id": "board",
+      "type": "arduino_{{.Board}}",
+      "label": "Arduino",
+      "x": 40,
+      "y": 20,
+      "rotation": 0,
+      "color": "",
+      "props": {}
+    }{{range .CircuitComponents}},
+    {
+      "id": "{{.ID}}",
+      "type": "{{.Type}}",
+      "label": "{{.Label}}",
+      "x": {{.X}},
+      "y": {{.Y}},
+      "rotation": 0,
+      "color": "",
+      "props": {}
+    }{{end}}
+  ],
+  "wires": [],
+  "notes": []
+}

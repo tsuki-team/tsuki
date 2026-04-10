@@ -75,7 +75,54 @@ def zip_directory(dir_path='.', zip_path='archive.zip', additional_ignores=[]):
         else:
             print(f"OK — {len(z.namelist())} files, all readable.")
 
+# ── tsuki-pkg package builder ─────────────────────────────────────────────────
+
+def _remap_tsuki_pkg_path(arcname):
+    """Remap monorepo pkg/ paths to tsuki-pkg libs/ layout."""
+    parts = arcname.replace('\\', '/').split('/', 1)
+    if parts[0] == 'pkg' and len(parts) == 2:
+        remainder = parts[1]
+        if remainder.startswith('.git') or remainder.startswith('keys/'):
+            return None
+        return 'libs/' + remainder
+    return arcname
+
+def build_tsuki_pkg_archive(repo_root=None, zip_path=None):
+    if repo_root is None:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if zip_path is None:
+        zip_path = os.path.join(repo_root, 'tsuki-pkg.zip')
+    pkg_dir = os.path.join(repo_root, 'pkg')
+    if not os.path.isdir(pkg_dir):
+        raise FileNotFoundError(f"pkg/ not found at {pkg_dir} — submodule initialised?")
+    SKIP_DIRS = {'.git', 'keys'}
+    files_to_add = []
+    for root, dirs, files in os.walk(pkg_dir):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for file in files:
+            abs_path = os.path.join(root, file)
+            mono_arcname = os.path.relpath(abs_path, repo_root).replace(os.sep, '/')
+            remapped = _remap_tsuki_pkg_path(mono_arcname)
+            if remapped is not None:
+                files_to_add.append((abs_path, remapped))
+    print(f"Building tsuki-pkg archive: {len(files_to_add)} file(s) → {zip_path}")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zipf:
+        for i, (abs_path, arcname) in enumerate(files_to_add):
+            info = zipfile.ZipInfo(arcname, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with open(abs_path, 'rb') as f:
+                zipf.writestr(info, f.read())
+    print(f"OK — {zip_path}")
+    return zip_path
+
 if __name__ == '__main__':
+    import argparse
     _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _out  = os.path.join(_root, 'archive.zip')
-    zip_directory(dir_path=_root, zip_path=_out, additional_ignores=[])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['repo', 'tsuki-pkg'], default='repo')
+    parser.add_argument('--out', default=None)
+    args = parser.parse_args()
+    if args.mode == 'tsuki-pkg':
+        build_tsuki_pkg_archive(_root, args.out or os.path.join(_root, 'tsuki-pkg.zip'))
+    else:
+        zip_directory(_root, args.out or os.path.join(_root, 'archive.zip'), [])

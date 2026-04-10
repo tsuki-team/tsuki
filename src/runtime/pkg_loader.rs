@@ -188,6 +188,27 @@ pub fn default_libs_dir() -> PathBuf {
     }
 }
 
+/// Returns the cache directory for remotely-fetched packages.
+///   Linux/macOS: ~/.cache/tsuki/pkg
+///   Windows:     %LOCALAPPDATA%\tsuki\pkg-cache
+///
+/// When a user runs `tsuki pkg install <n>` without the tsuki-pkg submodule
+/// present (typical for binary distributions), the CLI downloads the
+/// `godotinolib.toml` from tsuki-pkg and stores it here. tsuki-core then
+/// loads from cache exactly like it would from the local submodule.
+pub fn default_cache_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
+        PathBuf::from(base).join("tsuki").join("pkg-cache")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home).join(".cache").join("tsuki").join("pkg")
+    }
+}
+
 /// Scan a libs directory and return the path to `tsukilib.toml` for each
 /// installed library at its highest installed version.
 ///
@@ -204,6 +225,39 @@ pub fn default_libs_dir() -> PathBuf {
 ///       tsukilib.toml
 /// ```
 pub fn scan_libs_dir(libs_dir: &Path) -> Vec<PathBuf> {
+    scan_single_dir(libs_dir)
+}
+
+/// Scan both the local libs directory and the remote fetch cache, returning
+/// all `tsukilib.toml` paths found. Local libs take precedence — if the same
+/// library appears in both, only the local version is returned.
+pub fn scan_libs_and_cache(libs_dir: &Path, cache_dir: &Path) -> Vec<PathBuf> {
+    let mut found = scan_single_dir(libs_dir);
+    let cached   = scan_single_dir(cache_dir);
+
+    // Track which library names are already covered by local libs.
+    let local_names: std::collections::HashSet<String> = found.iter()
+        .filter_map(|p| {
+            // path is libs_dir/<name>/<ver>/tsukilib.toml — parent is ver, grandparent is name
+            p.parent()?.parent()?.file_name()?.to_str().map(|s| s.to_owned())
+        })
+        .collect();
+
+    for p in cached {
+        let lib_name = p.parent()
+            .and_then(|ver| ver.parent())
+            .and_then(|n| n.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_owned();
+        if !local_names.contains(&lib_name) {
+            found.push(p);
+        }
+    }
+    found
+}
+
+fn scan_single_dir(libs_dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let Ok(entries) = fs::read_dir(libs_dir) else { return found };
 
@@ -234,18 +288,6 @@ pub fn scan_libs_dir(libs_dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Load all libraries found under `libs_dir`.
-pub fn load_all(libs_dir: &Path) -> Vec<LoadedLib> {
-    scan_libs_dir(libs_dir)
-        .into_iter()
-        .filter_map(|p| {
-            load_from_file(&p)
-                .map_err(|e| eprintln!("tsuki: warning: skipping {}: {}", p.display(), e))
-                .ok()
-        })
-        .collect()
-}
-
 // ── Install helper (called by Go CLI via shell-out) ───────────────────────────
 
 /// Download and install a library from a URL or registry slug.
@@ -271,4 +313,59 @@ pub fn install_from_toml(libs_dir: &Path, toml_str: &str) -> Result<String> {
     })?;
 
     Ok(format!("installed {}@{} → {}", pkg_name, version, dest_dir.display()))
+}
+
+/// Cache a remotely-fetched `tsukilib.toml` into the tsuki-pkg cache directory
+/// (`~/.cache/tsuki/pkg/<n>/<version>/tsukilib.toml`).
+///
+/// Called by the Go CLI after it downloads the TOML from tsuki-pkg GitHub raw.
+/// Subsequent builds load from cache without network access.
+pub fn cache_remote_toml(cache_dir: &Path, toml_str: &str) -> Result<String> {
+    let manifest: LibManifest = toml::from_str(toml_str).map_err(|e| {
+        TsukiError::codegen(format!("invalid tsukilib.toml: {}", e))
+    })?;
+
+    let pkg_name = &manifest.package.name;
+    let version  = &manifest.package.version;
+    let dest_dir = cache_dir.join(pkg_name).join(version);
+
+    fs::create_dir_all(&dest_dir).map_err(|e| {
+        TsukiError::codegen(format!("cannot create cache dir {}: {}", dest_dir.display(), e))
+    })?;
+
+    let dest_file = dest_dir.join("tsukilib.toml");
+    fs::write(&dest_file, toml_str).map_err(|e| {
+        TsukiError::codegen(format!("cannot write cache file {}: {}", dest_file.display(), e))
+    })?;
+
+    Ok(format!("cached {}@{} → {}", pkg_name, version, dest_dir.display()))
+}
+
+/// Load all libraries found under `libs_dir`.
+pub fn load_all(libs_dir: &Path) -> Vec<LoadedLib> {
+    scan_libs_dir(libs_dir)
+        .into_iter()
+        .filter_map(|p| {
+            load_from_file(&p)
+                .map_err(|e| eprintln!("tsuki: warning: skipping {}: {}", p.display(), e))
+                .ok()
+        })
+        .collect()
+}
+
+/// Load all libraries from `libs_dir`, supplementing with any cached remote
+/// packages in `cache_dir` that are not already installed locally.
+///
+/// This is the recommended entry point for tsuki-core builds.  It handles
+/// both the development (submodule present) and binary-distribution (no
+/// submodule, cached from tsuki-pkg) use cases transparently.
+pub fn load_all_with_cache(libs_dir: &Path, cache_dir: &Path) -> Vec<LoadedLib> {
+    scan_libs_and_cache(libs_dir, cache_dir)
+        .into_iter()
+        .filter_map(|p| {
+            load_from_file(&p)
+                .map_err(|e| eprintln!("tsuki: warning: skipping {}: {}", p.display(), e))
+                .ok()
+        })
+        .collect()
 }

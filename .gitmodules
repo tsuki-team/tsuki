@@ -1,0 +1,4 @@
+[submodule "pkg"]
+	path = pkg
+	url = https://github.com/tsuki-team/tsuki-pkg.git
+	branch = main

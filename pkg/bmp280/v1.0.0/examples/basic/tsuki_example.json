@@ -1,4 +1,0 @@
-{
-  "name": "Basic Pressure & Temperature",
-  "description": "Read temperature, barometric pressure and estimated altitude from a BMP280 sensor."
-}
